@@ -1,0 +1,680 @@
+Tên đề tài: THU THẬP DỮ LIỆU TẬP CHUẨN AI (Xây dựng 1 web app(android + ios))
+(CSDL - Cơ sở dữ liệu phải Quan hệ, chạy local. Tài khoản cá nhân: id, tên, mật khẩu, số điện thoại, video, token Một số bảng cơ sở dữ liệu khác (phục vụ cho push))
+
+-- Tech stack dự kiến dùng:
++ dùng csdl sqlite + Prisma
++ Code bằng react + react native + express.js 
++ Dùng npm workspaces và Turborepo 
++ Băm SHA-256 file 1GB: Dùng react-native-fs (Native Hash) (hàm RNFS.hash(filePath, 'sha256'))
++ Đồng bộ nhịp Sync 3–5 giây: Dùng TanStack Query (React Query)
++ Ghép mảnh Video & Sinh Thumbnail ở Server: Dùng ffmpeg-static
++ Upload ngầm khi chuyển màn hình: Dùng react-native-background-actions
++ Dùng chung Schema Validation bằng Zod trong packages/shared
+
+1. Yêu cầu tổng quan đề tài
+- Multi-Cam Recorder là ứng dụng đa nền tảng cho phép một máy Controller điều khiển đồng thời nhiều máy Remote Camera cùng bắt đầu và cùng dừng quay. Vai trò gắn vào tài khoản chứ không gắn vào thiết bị: hệ thống chỉ có duy nhất một tài khoản Controller do nhà phát hành cấp sẵn, mọi tài khoản tạo qua màn Đăng ký đều là tài khoản Remote.
+!!! Cả app điện thoại lẫn trên web khi đăng nhập tài khoản controller thì đều có thể thành controller. Và ngược lại đối với tài khoản remote.
+
+- 15 chức năng:
+•    Đăng nhập.
+•    Đăng ký tài khoản (luôn là tài khoản Remote).
+•    Quên mật khẩu — đặt lại qua mã xác thực gửi về email hoặc SMS.
+•    Đổi mật khẩu khi đang đăng nhập.
+•    Controller tạo phòng và phát mã mời 6 ký tự.
+•    Máy Remote nhập mã mời để vào phòng và cấp quyền điều khiển quay.
+•    Controller đồng bộ Start/Stop quay video cho toàn bộ thiết bị trong phòng.
+•    Trong quá trình quay, video TỰ ĐỘNG được upload lên server, không cần người dùng bấm gửi.
+•    Controller xem được danh sách video đã upload lên server.
+•    Controller chính là server, cùng kết nối một mạng với các máy Remote.
+•    Máy Remote tự lật camera trước/sau ngay trên thiết bị — Controller điều khiển được việc này.
+•    Video được lưu và xem trong thư viện của ứng dụng; máy Remote KHÔNG có chức năng tải video từ server về máy.
+•    Controller xóa được một clip hoặc nhiều clip cùng lúc khỏi server.
+•    Controller loại một máy Remote ra khỏi phòng.
+•    Xóa tài khoản vĩnh viễn cùng toàn bộ video đã upload — yêu cầu bắt buộc của App Store và Google Play.
+
+-- Các chức năng bên lề:
+Pipeline quay video: xin quyền camera và micro, mở khung xem trực tiếp, ghi ra MP4 (H.264 + AAC) dạng fragmented.
+Nút lật camera trước/sau ở máy Remote — chạy hoàn toàn cục bộ, không gọi API và Controller không điều khiển được.
+Sinh local_video_uid dạng UUID và đặt tên file theo mẫu <recorded_at>__<camera_name>__<session_id>__<local_video_uid>.mp4, kèm thumbnail cùng tên đuôi .jpg.
+Cảnh báo khi dung lượng trống dưới 500 MB trước khi cho quay.
+Bộ đếm nhịp sync tuân theo next_sync_in server trả về, tạm dừng khi ứng dụng vào nền.
+Banner đỏ "Đang được điều khiển từ xa" và khóa nút quay khi máy đang ở trong phòng.
+
+•    Hàng đợi lệnh ở máy Remote: đọc pending_commands từ sync_device, thực thi lệnh còn hạn và chưa từng chạy.
+•    Chống trùng lệnh bằng client_command_id dạng UUID; bỏ qua lệnh trùng id và lệnh có dấu thời gian cũ hơn 30 giây.
+•    Tính độ lệch đồng hồ giữa các máy dựa vào server_time trả về trong sync_device, lưu kèm clip để về sau ghép được các góc máy.
+•    Chấm đỏ và bộ đếm giờ trên từng dòng thiết bị ở màn Điều khiển; làm mờ dòng mất kết nối dựa vào last_seen.
+•    Socket đẩy lệnh (làm sau cùng nếu còn thời gian): lệnh quay phải tới mọi máy trong dưới một giây.
+
+•    Tác vụ nền: WorkManager trên Android, BGTaskScheduler trên iOS, để người dùng chuyển màn hình mà upload vẫn chạy.
+•    Tính mã băm SHA-256 của file trước khi gọi init_upload; chặn ngay nếu file vượt 1 GB hoặc không phải MP4.
+•    Cơ chế gửi lại mảnh lỗi tối đa 3 lần, và tiếp tục từ missing_chunks sau khi mất mạng.
+•    Ghi file rỗng đuôi .uploaded cạnh clip để đánh dấu đã gửi, thay cho cơ sở dữ liệu ở client.
+•    Thẻ tiến trình thu nhỏ ở đầu màn Thư viện; Controller theo dõi upload_percent của từng máy qua sync_room.
+
+•    Màn Thư viện của Controller: gom theo phiên quay, phân trang bằng index và count, cache kết quả để xem lại khi mất mạng.
+•    Hàng đợi tải xuống, mỗi lần đúng một clip, hiện rõ "đang tải clip 2/5".
+•    Chế độ chọn nhiều clip: chọn một clip gọi delete_video, chọn từ hai clip trở lên gọi delete_videos_bulk.
+•    Màn Thư viện của Remote: chỉ xem lại trong ứng dụng, không có nút tải xuống và không có nút xóa.
+•    Xác nhận hai lớp cho chức năng xóa tài khoản; ẩn mục này khi account_role = controller.
+
+2. Danh sách 28 API 
+
+A — Xác thực và tài khoản (9)
+
+1. signup — POST /auth/signup
+Thuộc nhóm: A — Xác thực và tài khoản (API số 1/28)
+•    Thao tác trên giao diện: Bấm "Tạo tài khoản"
+•    Mô tả: Đăng ký tài khoản mới. Tài khoản đăng ký qua ứng dụng LUÔN là tài khoản Remote; hệ thống chỉ có duy nhất một tài khoản Controller do nhà phát hành cấp sẵn, không đăng ký được.
+•    Tham số đầu vào: first_name (string), last_name (string), email (string), phone (string, 10 số bắt đầu bằng 0), password (string 6–20 ký tự, không ký tự đặc biệt, không trùng phone)
+•    Xử lý kết quả: Thành công: chuyển sang màn nhập mã xác thực. Lỗi: "Email/số điện thoại đã được đăng ký"; báo lỗi tại đúng ô sai định dạng
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "user_id": "u_10293",
+    "email": "an.nguyen@gmail.com",
+    "phone": "0912345678",
+    "account_role": "remote",
+    "verify_required": “1”
+  }
+}
+
+2. get_verify_code — POST /auth/verify-code
+•    Thuộc nhóm: A — Xác thực và tài khoản (API số 2/28)
+•    Thao tác trên giao diện: Tự động sau khi đăng ký; hoặc bấm "Quên mật khẩu?"
+•    Mô tả: Yêu cầu server gửi mã xác thực 6 số về email hoặc SMS. Dùng chung cho hai luồng đăng ký và quên mật khẩu, phân biệt bằng tham số purpose. Giới hạn 120 giây giữa 2 lần gọi. Để đơn giản thì mã verify được trả về ở API này luôn
+•    Tham số đầu vào: email (string) HOẶC phone (string), purpose (signup | forgot_password)
+•    Xử lý kết quả: Chuyển sang màn nhập mã, bắt đầu đếm ngược 120 giây và làm mờ nút "Gửi lại mã"
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "expires_in": 300,
+    "masked_target": "a***@gmail.com",
+    "code_verify": "...."
+  }
+}
+
+3. check_verify_code — POST /auth/verify-code/check
+•    Thuộc nhóm: A — Xác thực và tài khoản (API số 3/28)
+•    Thao tác trên giao diện: Bấm "Xác nhận"
+•    Mô tả: Kiểm tra mã xác thực người dùng nhập khi đăng ký. Đúng thì kích hoạt tài khoản và trả token đăng nhập luôn, không bắt đăng nhập lại.
+•    Tham số đầu vào: email/phone (string), code_verify (string 6 số)
+•    Xử lý kết quả: Thành công: nhận token và vào thẳng Trang chính bản Remote. Lỗi: "Mã xác thực không đúng", cho nhập lại
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "user_id": "u_10293",
+    "access_token": "eyJhbGciOi...",
+    "refresh_token": "rt_8f2a...",
+    "account_role": "remote",
+    "active": "1"
+  }
+}
+
+4. login — POST /auth/login
+•    Thuộc nhóm: A — Xác thực và tài khoản (API số 4/28)
+•    Thao tác trên giao diện: Bấm "Đăng nhập"
+•    Mô tả: Đăng nhập và đăng ký luôn thông tin thiết bị trong cùng một lời gọi (đã gộp register_device của v2 vào đây). Không hủy phiên trên máy khác vì một tài khoản cần đăng nhập đồng thời trên nhiều máy. Response trả về account_role để ứng dụng biết ngay dựng giao diện Controller hay Remote.
+•    Tham số đầu vào: email/phone (string), password (string), device_id (string, UUID sinh ở client lần đầu chạy), device_type (1=android, 2=ios, 4=web), device_name (string)
+•    Xử lý kết quả: Thành công: lưu token vào Keystore/Keychain, đọc account_role để dựng giao diện Controller hay Remote rồi vào Trang chính. Lỗi: "Tài khoản không tồn tại"; "Sai mật khẩu"; "Tài khoản đã bị khóa"
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "user": {
+      "id": "u_10293",
+      "first_name": "An",
+      "last_name": "Nguyen",
+      "email": "an.nguyen@gmail.com",
+      "phone": "0912345678"
+	},
+    "account_role": "remote",
+    "access_token": "eyJhbGciOi...",
+    "refresh_token": "rt_8f2a...",
+    "expires_in": 3600,
+    "device": {
+      "device_id": "dv_a71c",
+      "camera_name": "Cam Trai"
+	}
+  }
+}
+
+5. refresh_token — POST /auth/refresh
+•    Thuộc nhóm: A — Xác thực và tài khoản (API số 5/28)
+•    Thao tác trên giao diện: Tự động khi access_token hết hạn
+•    Mô tả: Cấp lại access_token khi token cũ hết hạn, để người dùng không bị đá về màn Đăng nhập giữa buổi quay.
+•    Tham số đầu vào: refresh_token (string)
+•    Xử lý kết quả: Mỗi lần gặp lỗi token hết hạn chỉ thử refresh ĐÚNG MỘT LẦN; nếu vẫn thất bại thì xóa phiên và đưa người dùng về màn Đăng nhập
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "access_token": "eyJhbGciOi...",
+    "refresh_token": "rt_9c41...",
+    "expires_in": "3600"
+  }
+}
+
+6. forgot_password — POST /auth/password/forgot
+•    Thuộc nhóm: A — Xác thực và tài khoản (API số 6/28)
+•    Thao tác trên giao diện: Nhập mã xong, bấm "Đặt lại mật khẩu"
+•    Mô tả: Đặt lại mật khẩu khi quên, thông qua mã xác thực đã gửi về email hoặc SMS ở bước get_verify_code.
+•    Tham số đầu vào: email/phone (string), code_verify (string 6 số), new_password (string 6–20 ký tự)
+•    Xử lý kết quả: Thành công: quay về màn Đăng nhập kèm thông báo đặt lại mật khẩu thành công. Lỗi: mã sai hoặc đã hết hạn
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {}
+}
+
+7. change_password — PUT /auth/password
+•    Thuộc nhóm: A — Xác thực và tài khoản (API số 7/28)
+•    Thao tác trên giao diện: Bấm "Xác nhận đổi mật khẩu"
+•    Mô tả: Đổi mật khẩu khi đang đăng nhập. Sau khi đổi, server thu hồi toàn bộ refresh token của các thiết bị khác nhưng giữ nguyên phiên của thiết bị vừa đổi.
+•    Tham số đầu vào: old_password (string), new_password (string 6–20 ký tự, không trùng mật khẩu cũ)
+•    Xử lý kết quả: Lỗi: "Mật khẩu cũ không đúng". Đổi xong KHÔNG lưu mật khẩu mới vào thiết bị; các máy khác sẽ bị đăng xuất ở lần gọi API kế tiếp
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {}
+}
+
+8. logout — POST /auth/logout
+•    Thuộc nhóm: A — Xác thực và tài khoản (API số 8/28)
+•    Thao tác trên giao diện: Bấm "Đăng xuất"
+•    Mô tả: Đăng xuất thiết bị hiện tại. Chỉ hủy phiên của device_id đang gọi, các thiết bị khác vẫn giữ nguyên.
+•    Tham số đầu vào: device_id (string, lấy từ token)
+•    Xử lý kết quả: Nếu đang ở trong phòng thì gọi leave_room trước. Xóa token khỏi thiết bị và quay về màn Đăng nhập
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {}
+}
+
+9. delete_account — DELETE /users/me
+•    Thuộc nhóm: A — Xác thực và tài khoản (API số 9/28)
+•    Thao tác trên giao diện: Bấm "Xóa tài khoản"
+•    Mô tả: Xóa vĩnh viễn tài khoản cùng toàn bộ video mà tài khoản đó đã upload lên server. Bắt buộc phải có để được duyệt trên App Store và Google Play. Tài khoản Controller do nhà phát hành cấp KHÔNG xóa được bằng API này.
+•    Tham số đầu vào: password (string), confirm (bắt buộc = true)
+•    Xử lý kết quả: Bắt nhập lại mật khẩu và xác nhận hai lần trước khi gọi; nếu đang ở trong phòng thì rời phòng trước. Thành công: xóa token và quay về màn Đăng nhập. Lỗi: "Sai mật khẩu"; "Tài khoản Controller không thể xóa"
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "deleted_at": "2026-08-03T15:40:00Z"
+  }
+}
+
+B — Phòng và ghép nối bằng mã mời (6)
+
+ 10. create_room — POST /rooms
+•    Thuộc nhóm: B — Phòng và ghép nối bằng mã mời (API số 10/28)
+•    Thao tác trên giao diện: Mở màn hình
+•    Mô tả: Tạo phòng điều khiển và sinh mã mời 6 ký tự. CHỈ tài khoản Controller gọi được; server chặn ngay ở tầng xác thực dựa vào claim acc trong token.
+•    Tham số đầu vào: room_name (string, tùy chọn), max_members (string, mặc định 8)
+•    Xử lý kết quả: Hiển thị mã mời cỡ lớn kèm mã QR chứa cùng nội dung. Lỗi: tài khoản không phải Controller; nếu đã có phòng đang mở thì server trả lại đúng phòng cũ thay vì tạo phòng mới
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "room_id": "rm_5521",
+    "invite_code": "8F2A1C",
+    "expires_at": "2026-08-03T14:35:30Z",
+    "created_at": "2026-08-03T14:25:30Z",
+    "members": []
+  }
+}
+
+ 11. join_room — POST /rooms/join
+Thuộc nhóm: B — Phòng và ghép nối bằng mã mời (API số 11/28)
+•    Thao tác trên giao diện: Nhập mã và bấm "Tham gia"
+•    Mô tả: Máy Remote nhập mã mời để vào phòng. Sau khi vào, máy Remote xác nhận cấp quyền điều khiển quay cho Controller — đây là bước đồng ý bắt buộc, không thể bỏ qua.
+•    Tham số đầu vào: invite_code (string 6 ký tự), device_id (string), camera_name (string), grant_control (bắt buộc = true)
+•    Xử lý kết quả: Thành công: hiện banner đỏ "Đang được điều khiển từ xa" và chuyển sang chế độ nhận lệnh. Lỗi: mã không tồn tại hoặc đã hết hạn; phòng đã đầy; đang ở trong phòng khác
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "room_id": "rm_5521",
+    "room_name": "Buoi quay 03/08",
+    "member_id": "mb_01",
+    "members": [
+  	{
+        "member_id": "mb_01",
+        "camera_name": "Cam Trai",
+        "is_online": "1"
+  	}
+	]
+  }
+}
+
+ 12. get_room_members — GET /rooms/{room_id}/members
+•    Thuộc nhóm: B — Phòng và ghép nối bằng mã mời (API số 12/28)
+•    Thao tác trên giao diện: Mở màn hình
+•    Mô tả: Lấy danh sách máy Remote trong phòng. Controller gọi MỘT LẦN khi mở màn hình để dựng danh sách ban đầu; các lần cập nhật sau dùng sync_room.
+•    Tham số đầu vào: (room_id trên path), index (int), count (int)
+•    Xử lý kết quả: Dựng danh sách thiết bị ban đầu. Các lần cập nhật sau KHÔNG gọi lại API này
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "total": "2",
+    "members": [
+  	{
+        "member_id": "mb_01",
+        "device_id": "dv_a71c",
+        "camera_name": "Cam Trai",
+        "is_online": "1",
+        "battery_level": "87",
+        "storage_free": "12884901888",
+        "recording_state": "idle"
+  	}
+	]
+  }
+}
+
+ 13. kick_member — DELETE /rooms/{room_id}/members/{member_id}
+   Thuộc nhóm: B — Phòng và ghép nối bằng mã mời (API số 13/28)
+•    Thao tác trên giao diện: Bấm "Loại khỏi phòng" trên một dòng thiết bị
+•    Mô tả: Controller loại một máy Remote khỏi phòng và thu hồi quyền điều khiển máy đó đã cấp. Nếu máy đang quay thì server xếp sẵn lệnh stop_record để máy ghi xong file và tự upload lên server trước khi bị loại, tránh mất clip dở dang.
+•    Tham số đầu vào: (room_id, member_id trên path), reason (string, tùy chọn)
+•    Xử lý kết quả: Hỏi xác nhận trước. Máy bị loại nhận lệnh leave_room ở lần sync_device kế tiếp, ẩn banner đỏ và quay về chế độ quay độc lập. Controller thấy máy này nằm trong mảng left của lần sync_room kế tiếp. Lỗi: không phải chủ phòng; member_id không còn trong phòng
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "member_id": "mb_02",
+    "removed_at": "2026-08-03T14:40:12Z",
+    "session_stopped": 0
+  }
+}
+
+ 14. leave_room — POST /rooms/{room_id}/leave
+•    Thuộc nhóm: B — Phòng và ghép nối bằng mã mời (API số 14/28)
+•    Thao tác trên giao diện: Bấm "Rời phòng"
+•    Mô tả: Máy Remote tự rời phòng, đồng thời thu hồi quyền điều khiển đã cấp cho Controller. Máy Remote luôn có quyền tự rời bất cứ lúc nào, Controller không ép giữ được.
+•    Tham số đầu vào: room_id (trên path), device_id (string)
+•    Xử lý kết quả: Ẩn banner đỏ, quay về chế độ quay độc lập. Controller thấy máy này biến mất ở mảng left của lần sync_room kế tiếp
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": { "room_id" : "...", "device_id" : "...." }
+}
+
+ 15. close_room — DELETE /rooms/{room_id}
+•    Thuộc nhóm: B — Phòng và ghép nối bằng mã mời (API số 15/28)
+•    Thao tác trên giao diện: Bấm "Đóng phòng"
+•    Mô tả: Đóng phòng và vô hiệu hóa mã mời. Nếu đang quay thì server đặt sẵn lệnh STOP cho toàn bộ máy Remote nhận ở lần sync kế tiếp trước khi đóng.
+•    Tham số đầu vào: (room_id trên path)
+•    Xử lý kết quả: Hỏi xác nhận trước. Nếu đang quay thì server tự xếp lệnh dừng cho các máy, chờ các máy upload xong rồi mới đóng hẳn phòng
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "closed_at": "2026-08-03T15:02:44Z",
+    "session_stopped": 1
+  }
+}
+
+C — Đồng bộ trạng thái và điều khiển quay (4)
+
+ 16. sync_device — POST /devices/{device_id}/sync
+  Thuộc nhóm: C — Đồng bộ trạng thái và điều khiển quay Start/Stop (API số 16/28)
+•    Thao tác trên giao diện: Định kỳ 3–5 giây khi ở trong phòng
+•    Mô tả: API ĐỒNG BỘ ĐỊNH KỲ của máy Remote. Một lời gọi làm hai việc: đẩy lên trạng thái phần cứng, trạng thái quay và tiến độ upload; đồng thời nhận về mảng pending_commands chứa lệnh đang chờ. Kiểu lệnh camera_config của v2 đã bị bỏ vì Controller không còn điều khiển camera.
+•    Tham số đầu vào: battery_level (0–100), storage_free (byte), recording_state (idle|recording|saved|failed), elapsed_ms (int), local_video_uid (string, khi vừa quay xong), upload_state (none|uploading|uploaded|failed), upload_percent (0–100), error_code (string, tùy chọn), last_command_id (UUID lệnh cuối đã thực hiện)
+•    Xử lý kết quả: Đọc pending_commands rồi thực thi lệnh còn hạn và chưa từng thực hiện; bỏ qua lệnh trùng command_id và lệnh cũ hơn 30 giây. Tuân theo next_sync_in mà server trả về thay vì cố định cứng một con số
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "server_time": "2026-08-03T14:41:03Z",
+    "next_sync_in": "3",
+    "room_status": {
+      "in_room": "1",       "room_id": "rm_5521",     "session_id": "S8F2A1"
+	},
+    "pending_commands": [
+  	{        "command_id": "cmd_7d3e",        "type": "start_record",
+        "payload": {
+          "resolution": "1920x1080",          "fps": "30"
+    	},
+        "issued_at": "2026-08-03T14:41:02Z"
+  	}
+	],
+    "session_revoked": "0"
+  }
+}
+
+ 17. sync_room — GET /rooms/{room_id}/sync
+   Thuộc nhóm: C — Đồng bộ trạng thái và điều khiển quay Start/Stop (API số 17/28)
+•    Thao tác trên giao diện: Định kỳ 3–5 giây
+•    Mô tả: API ĐỒNG BỘ ĐỊNH KỲ của Controller. Trả về trạng thái mới nhất của toàn bộ máy Remote trong phòng bằng đúng một lời gọi, kèm danh sách máy vừa vào và vừa rời. Tham số since cho phép server chỉ trả về phần đã thay đổi.
+•    Tham số đầu vào: since (timestamp hoặc revision của lần sync trước, tùy chọn)
+•    Xử lý kết quả: Nguồn dữ liệu duy nhất để vẽ pin, dung lượng, chấm đỏ, bộ đếm giờ và thanh tiến độ upload của từng máy. Máy mất kết nối xác định bằng last_seen. Truyền since bằng revision của lần trước để giảm dữ liệu
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "server_time": "2026-08-03T14:41:05Z",
+    "revision": "128",     "next_sync_in": "3",
+    "room": {
+      "status": "recording",
+      "session_id": "S8F2A1",
+      "started_at": "2026-08-03T14:41:02Z"
+	},
+    "members": [
+  	{
+        "member_id": "mb_01",
+        "camera_name": "Cam Trai",
+        "is_online": "1",
+        "battery_level": "86",
+        "is_charging": "0",
+        "storage_free": "12884901888",
+        "recording_state": "recording",
+        "elapsed_ms": "3200",
+        "upload_state": "none",
+        "upload_percent": "0",
+        "error_code": "null",
+        "last_seen": "2026-08-03T14:41:04Z"
+  	}
+	],
+    "joined": [],
+    "left": []
+  }
+}
+
+ 18. start_recording — POST /rooms/{room_id}/recording/start
+   Thuộc nhóm: C — Đồng bộ trạng thái và điều khiển quay Start/Stop (API số 18/28)
+•    Thao tác trên giao diện: Bấm nút Quay
+•    Mô tả: Controller bấm nút quay: server tạo một recording_session chung và xếp lệnh START vào hàng đợi của từng máy Remote trong phòng. Máy Remote nhận lệnh qua socket nếu socket đang mở, nếu không thì nhận ở lần sync_device kế tiếp.
+•    Tham số đầu vào: target (all | mảng member_id), config (resolution, fps, max_duration giây), client_command_id (UUID, chống trùng lệnh)
+•    Xử lý kết quả: Thành công: hiện chấm đỏ và bộ đếm giờ trên từng dòng thiết bị. Lỗi: không máy nào online; đang quay rồi thì bỏ qua
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "session_id": "S8F2A1",
+    "started_at": "2026-08-03T14:41:02Z",
+    "command_id": "cmd_7d3e",
+    "targets": ["mb_01", "mb_02"],
+    "rejected": []
+  }
+}
+
+ 19. stop_recording — POST /rooms/{room_id}/recording/stop
+   Thuộc nhóm: C — Đồng bộ trạng thái và điều khiển quay Start/Stop (API số 19/28)
+•    Thao tác trên giao diện: Bấm nút Dừng
+•    Mô tả: Controller dừng quay đồng thời toàn bộ máy Remote. Khác với v2: sau khi ghi xong file, mỗi máy Remote TỰ ĐỘNG khởi động luồng upload ở mục D, người dùng không phải bấm gửi.
+•    Tham số đầu vào: target (all | mảng member_id), client_command_id (UUID)
+•    Xử lý kết quả: Hiện bảng tổng kết phiên quay, sau đó chuyển sang theo dõi upload_percent của từng máy qua sync_room cho tới khi tất cả về upload_state = uploaded
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "session_id": "S8F2A1",
+    "stopped_at": "2026-08-03T14:58:20Z",
+    "results": [
+  	{
+        "member_id": "mb_01",
+        "local_video_uid": "0f3b9c7e-...",
+        "duration_ms": "1038000",
+        "size": "734003200",
+        "status": "saved"
+  	}
+	]
+  }
+}
+
+D — Tự động upload lên server (4)
+
+ 20. init_upload — POST /videos/uploads
+ •   Thuộc nhóm: D — Tự động upload lên server sau khi dừng quay (API số 20/28)
+•    Thao tác trên giao diện: Tự động ngay sau khi ghi xong file
+•    Mô tả: Khởi tạo phiên upload cho file tối đa 1 GB. Máy Remote gọi TỰ ĐỘNG, không chờ thao tác người dùng. Nếu cặp local_video_uid + checksum_sha256 đã tồn tại, server trả về ngay already_uploaded = 1 kèm video_id cũ và KHÔNG mở phiên upload mới.
+•    Tham số đầu vào: file_name (string), file_size (byte, tối đa 1073741824), mime_type (phải là video/mp4), checksum_sha256 (string), metadata (object bắt buộc: local_video_uid, device_id, camera_name, session_id, recorded_at, duration_ms, resolution, fps)
+•    Xử lý kết quả: Nếu already_uploaded = 1 thì dừng luôn tại đây và đánh dấu clip đã gửi, không truyền lại 1 GB dữ liệu. Lỗi: file quá lớn; vượt hạn mức lưu trữ
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "upload_id": "up_3a91",
+    "chunk_size": 5242880,
+    "total_chunks": 140,
+    "expires_at": "2026-08-03T16:58:20Z",
+    "already_uploaded": 0,
+    "video_id": null
+  }
+}
+
+ 21. upload_chunk — PUT /videos/uploads/{upload_id}/chunks/{index}
+ •    Thuộc nhóm: D — Tự động upload lên server sau khi dừng quay (API số 21/28)
+•    Thao tác trên giao diện: Gửi từng mảnh
+•    Mô tả: Gửi lần lượt từng mảnh của file. Mảnh lỗi thì gửi lại ngay riêng mảnh đó, sau 3 lần vẫn lỗi thì báo lỗi ở chunk đó và tạm dừng phiên.
+•    Tham số đầu vào: chunk (binary), chunk_index (int, trên path), chunk_checksum (string, trên header)
+•    Xử lý kết quả: Chạy bằng tác vụ nền của hệ điều hành (WorkManager trên Android, BGTaskScheduler trên iOS) để người dùng chuyển màn hình mà tiến trình vẫn tiếp tục
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "chunk_index": 12,
+    "received": 5242880,
+    "next_expected_index": 13
+  }
+}
+
+ 22. get_upload_status — GET /videos/uploads/{upload_id}
+ •    Thuộc nhóm: D — Tự động upload lên server sau khi dừng quay (API số 22/28)
+•    Thao tác trên giao diện: Mất mạng rồi có lại, hoặc mở lại ứng dụng
+•    Mô tả: Hỏi server đã nhận được những mảnh nào, để tiếp tục upload sau khi mất mạng hoặc ứng dụng bị tắt giữa chừng.
+•    Tham số đầu vào: (upload_id trên path)
+•    Xử lý kết quả: Chỉ gửi tiếp phần còn thiếu thay vì truyền lại từ đầu. Nếu phiên đã hết hạn thì gọi lại init_upload
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "upload_id": "up_3a91",
+    "status": "in_progress",
+    "received_chunks": [0, 1, 2, 3],
+    "missing_chunks": [4, 5],
+    "expires_at": "2026-08-03T16:58:20Z"
+  }
+}
+
+ 23. complete_upload — POST /videos/uploads/{upload_id}/complete
+•    Thuộc nhóm: D — Tự động upload lên server sau khi dừng quay (API số 23/28)
+•    Thao tác trên giao diện: Gửi xong mảnh cuối
+•    Mô tả: Báo đã gửi hết mảnh. Server ghép file, đối chiếu checksum toàn file, sinh thumbnail, tạo bản ghi Video và lưu lại local_video_uid để lần sau nhận diện clip trùng.
+•    Tham số đầu vào: (upload_id trên path)
+•    Xử lý kết quả: Đặt upload_state = uploaded ở lần sync_device kế tiếp để Controller thấy clip đã sẵn sàng. Lỗi: thiếu mảnh hoặc sai mã băm, phải gửi lại mảnh hỏng
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "video_id": "vd_60f2",
+    "local_video_uid": "0f3b9c7e-...",
+    "url": "https://cdn.../vd_60f2.mp4?sig=...",
+    "thumbnail_url": "https://cdn.../vd_60f2.jpg?sig=...",
+    "duration_ms": 1038000,
+    "size": 734003200,
+    "created_at": "2026-08-03T15:06:11Z"
+  }
+}
+
+E — Thư viện video trên server (5)
+
+ 24. get_list_videos — GET /videos
+ •    Thuộc nhóm: E — Thư viện video trên server (API số 24/28)
+•    Thao tác trên giao diện: Mở màn hình / kéo làm mới / cuộn tới cuối danh sách
+•    Mô tả: Lấy danh sách video đã được upload lên server. Tài khoản Controller thấy toàn bộ clip của mọi máy Remote đã từng vào phòng của mình, gom theo phiên quay; tài khoản Remote chỉ thấy clip do chính máy mình upload.
+•    Tham số đầu vào: index (int), count (int), session_id (tùy chọn), device_id (tùy chọn), sort (created_at_desc | created_at_asc)
+•    Xử lý kết quả: Phân trang bằng index và count, cuộn tới cuối thì gọi lại với index tăng dần. Lỗi: hiện trạng thái rỗng "Chưa có video nào". Kết quả được cache để xem lại khi mất mạng
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "total": 12,
+    "videos": [
+  	{
+        "id": "vd_60f2",
+        "name": "CamTrai_20260803_1425",
+        "thumbnail_url": "https://cdn.../vd_60f2.jpg?sig=...",
+        "duration_ms": 1038000,
+        "size": 734003200,
+        "created_at": "2026-08-03T15:06:11Z",
+        "camera_name": "Cam Trai",
+        "device_id": "dv_a71c",
+        "session_id": "S8F2A1",
+        "local_video_uid": "0f3b9c7e-...",
+        "downloaded_by_controller": 0
+  	}
+	]
+  }
+}
+
+ 25. get_video — GET /videos/{video_id}
+ •    Thuộc nhóm: E — Thư viện video trên server (API số 25/28)
+•    Thao tác trên giao diện: Bấm vào một clip để xem
+•    Mô tả: Lấy chi tiết một video kèm URL phát lại có chữ ký và thời hạn, dùng để xem trực tiếp trong thư viện của ứng dụng mà không cần tải về.
+•    Tham số đầu vào: (video_id trên path)
+•    Xử lý kết quả: Mở trình phát trong ứng dụng với URL có chữ ký. Lỗi: clip đã bị xóa thì gỡ khỏi danh sách
+  Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "id": "vd_60f2",
+    "name": "CamTrai_20260803_1425",
+    "url": "https://cdn.../vd_60f2.mp4?sig=...",
+    "thumbnail_url": "https://cdn.../vd_60f2.jpg?sig=...",
+    "duration_ms": 1038000,
+    "size": 734003200,
+    "resolution": "1920x1080",
+    "codec": "h264/aac",
+    "created_at": "2026-08-03T15:06:11Z",
+    "camera_name": "Cam Trai",
+    "device_id": "dv_a71c",
+    "session_id": "S8F2A1",
+    "local_video_uid": "0f3b9c7e-..."
+  }
+}
+
+ 26. get_download_url — GET /videos/{video_id}/download
+ •    Thuộc nhóm: E — Thư viện video trên server (API số 26/28)
+•    Thao tác trên giao diện: Bấm "Tải về máy"
+•    Mô tả: Lấy link tải một video từ server. CHỈ tài khoản Controller gọi được; máy Remote KHÔNG tải clip từ server về. Mỗi lời gọi chỉ cấp link cho ĐÚNG MỘT video. Server đánh dấu downloaded_by_controller = 1 sau khi cấp link.
+•    Tham số đầu vào: (video_id trên path)
+•    Xử lý kết quả: Tải lần lượt từng clip, không tải song song: chọn nhiều clip thì xếp hàng đợi, hiện "đang tải clip 2/5". Lỗi: đang có lượt tải khác chưa xong; tài khoản không phải Controller
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "download_url": "https://cdn.../vd_60f2.mp4?sig=...",
+    "expires_at": "2026-08-03T15:16:11Z",
+    "size": 734003200,
+    "checksum_sha256": "9b74c9897b..."
+  }
+}
+
+ 27. delete_video — DELETE /videos/{video_id}
+ •    Thuộc nhóm: E — Thư viện video trên server (API số 27/28)
+•    Thao tác trên giao diện: Bấm Xóa một clip
+•    Mô tả: Xóa một video khỏi server. CHỈ tài khoản Controller gọi được. Không tự động xóa bản sao đang nằm trong thư mục clip của máy Remote đã quay clip đó.
+•    Tham số đầu vào: (video_id trên path)
+•    Xử lý kết quả: Hỏi xác nhận trước. Chỉ xóa bản trên server; bản trong thư mục clip của máy Remote vẫn còn nguyên và KHÔNG bị upload lại vì đã có dấu .uploaded. Lỗi: clip đã bị xóa trước đó thì gỡ khỏi danh sách
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "video_id": "vd_60f2",
+    "deleted_at": "2026-08-03T15:20:00Z"
+  }
+}
+
+ 28. delete_videos_bulk — POST /videos/bulk-delete
+•    Thuộc nhóm: E — Thư viện video trên server (API số 28/28)
+•    Thao tác trên giao diện: Chọn nhiều clip rồi bấm Xóa
+•    Mô tả: Xóa nhiều video cùng lúc, tối đa 50 clip mỗi lời gọi. Màn Thư viện của Controller có chế độ chọn nhiều clip nên rất cần thao tác hàng loạt thay vì gọi delete_video lặp lại.
+•    Tham số đầu vào: video_ids (mảng string, tối đa 50)
+•    Xử lý kết quả: Hiện bảng kết quả từng clip nếu có clip xóa thất bại, không coi cả lô là lỗi. Lỗi: chọn quá 50 clip; tài khoản không phải Controller
+•    Dữ liệu trả về:
+{
+  "code": "1000",
+  "message": "OK",
+  "data": {
+    "deleted": ["vd_60f2", "vd_60f3"],
+    "failed": [
+  	{
+        "video_id": "vd_60f4",
+        "reason": "NOT_FOUND"
+  	}
+	]
+  }
+}
+
+3. Danh sách mã Response 
+
+| Mã code | Thông điệp (message) | Ý nghĩa và khi nào gặp | Ứng dụng xử lý |
+| :--- | :--- | :--- | :--- |
+| 1000 | OK | Thành công. Đọc tiếp phần data. | Xử lý bình thường theo cột "Xử lý kết quả" của từng API |
+| 1001 | Can not connect to DB | Server không kết nối được cơ sở dữ liệu. | Hiện "Không thể kết nối Internet" và cho thử lại |
+| 1002 | Parameter is not enough | Thiếu tham số bắt buộc. Thường do client quên gửi device_id, room_id hoặc client_command_id. | Lỗi lập trình, ghi log chi tiết; với người dùng chỉ hiện thông báo chung |
+| 1003 | Parameter type is invalid | Sai kiểu dữ liệu, ví dụ gửi battery_level dạng chuỗi thay vì số. | Lỗi lập trình, ghi log chi tiết |
+| 1004 | Parameter value is invalid | Giá trị không hợp lệ: mật khẩu ngoài khoảng 6–20 ký tự, số điện thoại không đủ 10 số, invite_code không đủ 6 ký tự, chọn quá 50 clip khi xóa hàng loạt. | Báo lỗi ngay tại ô nhập tương ứng. Phần lớn trường hợp này đã bị chặn từ bước kiểm tra tại client |
+| 1005 | Unknown error | Lỗi không xác định phía server. | Hiện "Không thể kết nối Internet" |
+| 1006 | File size is too big | File video vượt 1 GB, hoặc ảnh vượt giới hạn. | Chặn ngay từ client trước khi gọi init_upload; nếu vẫn gặp thì báo "Video vượt quá 1 GB" |
+| 1007 | Upload file failed | Ghi mảnh dữ liệu lên kho lưu trữ thất bại. | Gửi lại đúng mảnh đó, tối đa 3 lần; vẫn lỗi thì tạm dừng phiên và thử lại ở lần mở ứng dụng sau |
+| 1009 | Not access | Không đủ quyền. Gặp khi tài khoản Remote gọi create_room, close_room, kick_member, start_recording, stop_recording, get_download_url, delete_video hoặc delete_videos_bulk. | Ăn sẵn các nút này ở giao diện Remote. Nếu vẫn gặp thì báo "Tài khoản của bạn không có quyền thực hiện thao tác này" |
+| 1010 | Action has been done previously by this user | Lệnh trùng, nhận diện bằng client_command_id. Gặp khi mạng chập chờn khiến client gửi lại lệnh start_record hoặc stop_record. | Coi như thành công, KHÔNG báo lỗi và KHÔNG gửi lại lệnh |
+| 1012 | Limited access | Bị giới hạn tần suất. Gặp khi gọi get_verify_code lại trong vòng 120 giây. | Giữ nút "Gửi lại mã" ở trạng thái mở cho tới khi hết đếm ngược |
+| 9993 | Code verify is incorrect | Mã xác thực 6 số sai hoặc đã hết hạn. | Báo "Mã xác thực không đúng", xóa ô nhập và cho nhập lại |
+| 9994 | No data or end of list data | Hết dữ liệu khi phân trang get_list_videos, hoặc phòng chưa có máy nào. | Ngừng tải thêm trang. Nếu là trang đầu thì hiện trạng thái rỗng "Chưa có video nào" |
+| 9995 | User is not validated | Tài khoản không tồn tại hoặc chưa kích hoạt qua mã xác thực. | Báo "Tài khoản không tồn tại"; nếu chưa kích hoạt thì đưa sang màn nhập xác thực |
+| 9996 | User existed | Email hoặc số điện thoại đã được đăng ký. | Báo lỗi ngay tại ô Email hoặc ô Số điện thoại |
+| 9997 | Method is invalid | Sai HTTP method, ví dụ gửi POST vào endpoint chỉ nhận GET. | Lỗi lập trình, ghi log chi tiết |
+| 9998 | Token is invalid | access_token hết hạn, sai chữ ký, hoặc phiên đã bị thu hồi do đổi mật khẩu ở máy khác. | Thử refresh_token ĐÚNG MỘT LẦN; nếu vẫn thất bại thì xóa phiên và đưa người dùng về màn Đăng nhập |
+| 9999 | Exception error | Ngoại lệ chưa bắt được phía server. | Hiện "Không thể kết nối Internet" |
+| 2001 | Invite code not found or expired | Mã mời không tồn tại hoặc đã quá hạn. Gặp ở join_room. | Báo "Mã mời không đúng hoặc đã hết hạn", xóa ô nhập và đề nghị xin mã mới từ Controller |
+| 2002 | Room is full | Phòng đã đạt max_members. | Báo "Phòng đã đầy", không cho vào |
+| 2003 | Device already in another room | Thiết bị đang ở trong một phòng khác. | Hỏi người dùng có muốn rời phòng cũ không; đồng ý thì gọi leave_room rồi gọi lại join_room |
+| 2004 | Not room owner | Không phải chủ phòng. Gặp ở kick_member và close_room. | Ghi log và làm mới trạng thái phòng bằng sync_room |
+| 2005 | Room closed | Phòng đã bị đóng hoặc Controller đã đăng xuất. | Ăn banner đỏ, đưa máy Remote về chế độ quay độc lập |
+| 2006 | Invalid session state | Gọi start_recording khi đang quay, hoặc stop_recording khi không có phiên nào. | Bỏ qua lệnh và đồng bộ lại trạng thái nút bằng lần sync_room kế tiếp |
+| 3001 | Upload session not found or expired | upload_id không tồn tại hoặc đã quá expires_at. | Gọi lại init_upload để mở phiên mới và upload từ đầu |
+| 3002 | Missing chunks | Gọi complete_upload khi chưa gửi đủ mảnh. | Gọi get_upload_status để biết missing_chunks rồi gửi bù đúng các mảnh còn thiếu |
+| 3003 | Checksum mismatch | Mã băm SHA-256 của mảnh hoặc của file ghép không khớp. | Gửi lại mảnh hỏng; nếu sai ở toàn file thì mở phiên upload mới |
+| 3004 | Storage quota exceeded | Vượt hạn mức lưu trữ của tài khoản. | Dừng upload tự động, báo "Đã hết dung lượng lưu trữ" và đề nghị Controller xóa bớt clip cũ |
+| 3005 | Video already uploaded | Cập local_video_uid và checksum_sha256 đã có trên server. | KHÔNG phải lỗi thật: đánh dấu clip đã gửi và bỏ qua toàn bộ luồng upload. Tương đương already_uploaded = 1 |
+| 4001 | Video not found | Video không tồn tại hoặc đã bị xóa khỏi server. | Gỡ clip khỏi danh sách và làm mới màn Thư viện |
+| 4002 | Another download in progress | Đang có một lượt tải chưa hoàn tất. Gặp ở get_download_url. | Xếp clip vào hàng đợi, xong clip hiện tại mới xin link cho clip kế tiếp|
+
+
+

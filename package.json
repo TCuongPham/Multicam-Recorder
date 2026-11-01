@@ -1,0 +1,31 @@
+{
+  "name": "multicam-recorder",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "npm@11.19.1",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "setup": "npm run db:setup -w @multicam/server && npm run cert -w @multicam/server",
+    "dev": "turbo run dev --filter=@multicam/server --filter=@multicam/web",
+    "dev:server": "npm run dev -w @multicam/server",
+    "dev:web": "npm run dev -w @multicam/web",
+    "dev:mobile": "npm run start -w @multicam/mobile",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "start": "npm run build -w @multicam/web && npm run start -w @multicam/server"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0",
+    "typescript": "5.9.3"
+  },
+  "allowScripts": {
+    "@prisma/client@6.19.3": true,
+    "ffmpeg-static@5.3.0": true,
+    "prisma@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "esbuild@0.28.2": true
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "expo": {
+    "name": "Multi-Cam Recorder",
+    "slug": "multicam-recorder",
+    "version": "0.1.0",
+    "orientation": "default",
+    "userInterfaceStyle": "light",
+    "scheme": "multicam",
+    "platforms": ["ios", "android"],
+    "newArchEnabled": true,
+    "backgroundColor": "#0f172a",
+    "ios": {
+      "bundleIdentifier": "vn.multicam.recorder",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true,
+          "NSAllowsLocalNetworking": true
+        },
+        "NSLocalNetworkUsageDescription": "Ứng dụng kết nối tới máy Controller (server) trong cùng mạng LAN.",
+        "UIBackgroundModes": ["fetch", "processing"]
+      }
+    },
+    "android": {
+      "package": "vn.multicam.recorder",
+      "edgeToEdgeEnabled": true,
+      "permissions": ["android.permission.CAMERA", "android.permission.RECORD_AUDIO"]
+    },
+    "plugins": [
+      "expo-dev-client",
+      "expo-secure-store",
+      "expo-task-manager",
+      "expo-background-task",
+      [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": false,
+          "supportsPictureInPicture": false
+        }
+      ],
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "Ứng dụng cần quyền camera để quay video.",
+          "enableMicrophonePermission": true,
+          "microphonePermissionText": "Ứng dụng cần quyền micro để ghi âm kèm video.",
+          "enableCodeScanner": true
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true,
+            "minSdkVersion": 26
+          },
+          "ios": {
+            "deploymentTarget": "15.1"
+          }
+        }
+      ]
+    ]
+  }
+}

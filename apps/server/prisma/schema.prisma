@@ -1,0 +1,253 @@
+// CSDL quan hệ SQLite chạy local.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// Tài khoản cá nhân. Chỉ có duy nhất một tài khoản controller (seed sẵn).
+model User {
+  id           String    @id
+  username     String?   @unique
+  firstName    String
+  lastName     String
+  email        String?   @unique
+  phone        String?   @unique
+  passwordHash String
+  role         String    @default("remote") // controller | remote
+  active       Boolean   @default(false)
+  locked       Boolean   @default(false)
+  storageQuota BigInt    @default(21474836480) // 20 GB
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  devices        Device[]
+  sessions       AuthSession[]
+  videos         Video[]
+  uploads        UploadSession[]
+  ownedRooms     Room[]
+  downloads      DownloadTicket[]
+}
+
+/// Mã xác thực 6 số cho đăng ký / quên mật khẩu.
+model VerifyCode {
+  id        String    @id
+  target    String // email hoặc số điện thoại
+  purpose   String // signup | forgot_password
+  code      String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([target, purpose])
+}
+
+/// Thiết bị đã đăng nhập; cũng là nơi nhận lệnh đẩy (push) và trạng thái phần cứng.
+model Device {
+  id             String    @id // dv_xxx
+  userId         String
+  clientUid      String // UUID sinh ở client lần đầu chạy
+  deviceType     Int // 1 android, 2 ios, 4 web
+  deviceName     String
+  cameraName     String
+  pushToken      String?
+  batteryLevel   Int?
+  isCharging     Boolean   @default(false)
+  storageFree    BigInt?
+  recordingState String    @default("idle")
+  elapsedMs      Int       @default(0)
+  localVideoUid  String?
+  uploadState    String    @default("none")
+  uploadPercent  Int       @default(0)
+  errorCode      String?
+  cameraFacing   String?
+  lastCommandId  String?
+  lastSeen       DateTime?
+  createdAt      DateTime  @default(now())
+
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions AuthSession[]
+  members  RoomMember[]
+  commands Command[]
+
+  @@unique([userId, clientUid])
+}
+
+/// Phiên đăng nhập theo thiết bị (lưu refresh token đã băm).
+model AuthSession {
+  id               String    @id
+  userId           String
+  deviceId         String?
+  refreshTokenHash String    @unique
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device Device? @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Room {
+  id               String    @id // rm_xxx
+  ownerId          String
+  name             String
+  inviteCode       String
+  inviteExpiresAt  DateTime
+  maxMembers       Int       @default(8)
+  status           String    @default("open") // open | recording | closing | closed
+  revision         Int       @default(1)
+  currentSessionId String?
+  closingSince     DateTime?
+  createdAt        DateTime  @default(now())
+  closedAt         DateTime?
+
+  owner    User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  members  RoomMember[]
+  sessions RecordingSession[]
+  commands Command[]
+
+  @@index([inviteCode])
+}
+
+model RoomMember {
+  id           String    @id // mb_xxx
+  roomId       String
+  deviceId     String
+  userId       String
+  cameraName   String
+  grantControl Boolean   @default(true)
+  joinedAt     DateTime  @default(now())
+  leftAt       DateTime?
+  leftReason   String? // left | kicked | closed
+  joinedRev    Int
+  updatedRev   Int
+  leftRev      Int?
+
+  room   Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, leftAt])
+  @@index([deviceId, leftAt])
+}
+
+model RecordingSession {
+  id        String    @id // S + 5 ký tự
+  roomId    String
+  config    String // JSON
+  startedAt DateTime  @default(now())
+  stoppedAt DateTime?
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+}
+
+/// Hàng đợi lệnh cho từng máy Remote (pending_commands).
+model Command {
+  id         String    @id
+  commandId  String // cmd_xxx — cùng một lệnh logic gửi tới nhiều máy
+  roomId     String?
+  deviceId   String
+  type       String // start_record | stop_record | leave_room | switch_camera
+  payload    String // JSON
+  issuedAt   DateTime  @default(now())
+  expiresAt  DateTime
+  ackedAt    DateTime?
+
+  room   Room?  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, ackedAt])
+}
+
+/// Chống trùng lệnh của Controller bằng client_command_id.
+model ClientCommand {
+  id              String   @id
+  userId          String
+  clientCommandId String
+  action          String
+  response        String // JSON data trả lại cho lần gửi trùng
+  createdAt       DateTime @default(now())
+
+  @@unique([userId, clientCommandId])
+}
+
+model UploadSession {
+  id            String    @id // up_xxx
+  userId        String
+  deviceId      String
+  localVideoUid String
+  fileName      String
+  fileSize      BigInt
+  checksum      String
+  metadata      String // JSON
+  chunkSize     Int
+  totalChunks   Int
+  status        String    @default("in_progress") // in_progress | completed | failed
+  videoId       String?
+  expiresAt     DateTime
+  createdAt     DateTime  @default(now())
+
+  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chunks UploadChunk[]
+
+  @@index([localVideoUid, checksum])
+}
+
+model UploadChunk {
+  uploadId String
+  index    Int
+  size     Int
+  checksum String
+
+  upload UploadSession @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+
+  @@id([uploadId, index])
+}
+
+model Video {
+  id                     String   @id // vd_xxx
+  userId                 String
+  deviceId               String
+  roomId                 String?
+  sessionId              String?
+  localVideoUid          String
+  checksum               String
+  name                   String
+  fileName               String
+  filePath               String
+  thumbPath              String?
+  durationMs             Int
+  size                   BigInt
+  resolution             String
+  fps                    Float
+  codec                  String
+  cameraName             String
+  recordedAt             DateTime
+  clockOffsetMs          Int      @default(0)
+  downloadedByController Boolean  @default(false)
+  createdAt              DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([localVideoUid, checksum])
+  @@index([sessionId])
+  @@index([deviceId])
+}
+
+/// Mỗi Controller chỉ được tải một clip tại một thời điểm.
+model DownloadTicket {
+  id        String    @id
+  userId    String
+  videoId   String
+  expiresAt DateTime
+  doneAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, doneAt])
+}
