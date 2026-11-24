@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, Codes, MIN_FREE_STORAGE, formatBytes, formatDuration, inviteCodeSchema } from '@multicam/shared';
 import { useNow, useStore } from '@multicam/shared/react';
-import { Banner, errorText, useConfirm } from '../components/ui';
+import { IconFlip } from '../components/icons';
+import { Banner, errorText, useConfirm, useOneShot } from '../components/ui';
 import { UploadMiniCard } from '../components/UploadMiniCard';
 import { api } from '../lib/platform';
 import { storageFree, type RemoteRuntime } from '../lib/remoteRuntime';
@@ -53,8 +54,8 @@ function CameraView({ runtime }: { runtime: RemoteRuntime }) {
     e.preventDefault();
     const parsed = inviteCodeSchema.safeParse(code);
     if (!parsed.success) return setError('Mã mời gồm 6 ký tự');
-    if (!consent) return setError('Cần đồng ý cấp quyền điều khiển quay cho Controller');
-    if (!cameraName.trim()) return setError('Đặt tên cho camera này');
+    if (!consent) return setError('Cần cho phép điều khiển');
+    if (!cameraName.trim()) return setError('Nhập tên camera');
     setBusy(true);
     setError(null);
     runtime.setCameraName(cameraName.trim());
@@ -66,7 +67,7 @@ function CameraView({ runtime }: { runtime: RemoteRuntime }) {
       } catch (err) {
         if (err instanceof ApiError && err.code === Codes.DEVICE_IN_OTHER_ROOM) {
           const oldRoom = (err.data as { room_id?: string })?.room_id;
-          if (!oldRoom || !(await confirm('Đang ở phòng khác', <p>Thiết bị đang ở trong một phòng khác. Rời phòng cũ để vào phòng mới?</p>, false))) return;
+          if (!oldRoom || !(await confirm('Rời phòng hiện tại?', <p>Máy đang ở phòng khác.</p>, false))) return;
           await api.leaveRoom(oldRoom, session!.deviceId);
           res = await doJoin();
         } else throw err;
@@ -76,7 +77,7 @@ function CameraView({ runtime }: { runtime: RemoteRuntime }) {
     } catch (err) {
       if (err instanceof ApiError && err.code === Codes.INVITE_NOT_FOUND) {
         setCode('');
-        setError('Mã mời không đúng hoặc đã hết hạn — xin mã mới từ Controller');
+        setError('Mã mời không đúng hoặc đã hết hạn');
       } else setError(errorText(err));
     } finally {
       setBusy(false);
@@ -85,7 +86,7 @@ function CameraView({ runtime }: { runtime: RemoteRuntime }) {
 
   const leave = async () => {
     if (!agent.roomId) return;
-    if (!(await confirm('Rời phòng', <p>Rời phòng và thu hồi quyền điều khiển đã cấp cho Controller?</p>, false))) return;
+    if (!(await confirm('Rời phòng?', null, false))) return;
     try {
       if (recording) await runtime.agent.stopRecording();
       await api.leaveRoom(agent.roomId, session!.deviceId);
@@ -98,9 +99,9 @@ function CameraView({ runtime }: { runtime: RemoteRuntime }) {
   const toggleRecord = async () => {
     setError(null);
     if (recording) return runtime.agent.stopRecording();
-    if (lowStorage) return setError(`Dung lượng trống dưới ${formatBytes(MIN_FREE_STORAGE)}, hãy giải phóng bớt trước khi quay`);
+    if (lowStorage) return setError(`Bộ nhớ còn dưới ${formatBytes(MIN_FREE_STORAGE)}`);
     await runtime.agent.startRecording({ sessionId: null, resolution: '1920x1080', fps: 30, maxDurationSec: 0 });
-    if (runtime.agent.getState().recordingState === 'failed') setError(`Không quay được: ${runtime.agent.getState().errorCode}`);
+    if (runtime.agent.getState().recordingState === 'failed') setError(`Lỗi quay: ${runtime.agent.getState().errorCode}`);
   };
 
   const flip = async () => {
@@ -108,44 +109,64 @@ function CameraView({ runtime }: { runtime: RemoteRuntime }) {
     try {
       await runtime.recorder.switchCamera('toggle');
     } catch (err) {
-      setError((err as Error).message === 'CAMERA_BUSY_RECORDING' ? 'Không lật được camera khi đang quay' : errorText(err));
+      setError((err as Error).message === 'CAMERA_BUSY_RECORDING' ? 'Không lật được khi đang quay' : errorText(err));
     }
   };
 
   const elapsed = agent.recordingStartedAt ? now - agent.recordingStartedAt : 0;
+  const [flipClass, flipAnim] = useOneShot('flip-once', 500);
 
   return (
     <div className="page camera-page">
       {dialog}
       {agent.inRoom ? (
         <div className="remote-banner">
-          ● Đang được điều khiển từ xa · {agent.roomName ?? agent.roomId}
+          <span className="inline-icon">
+            <span className="rec-badge" style={{ background: 'rgba(255,255,255,0.2)' }}>
+              <span className="dot" /> LIVE
+            </span>
+            Đang được điều khiển từ xa · {agent.roomName ?? agent.roomId}
+          </span>
           <button className="btn btn-sm" onClick={leave}>
             Rời phòng
           </button>
         </div>
       ) : null}
-      {!mp4 ? <Banner kind="error">Trình duyệt này không ghi được MP4 (H.264/AAC). Hãy dùng Chrome, Edge hoặc Safari bản mới.</Banner> : null}
-      {lowStorage ? <Banner kind="danger">Dung lượng trống chỉ còn {formatBytes(free)} (dưới 500 MB).</Banner> : null}
+      {!mp4 ? <Banner kind="error">Trình duyệt không hỗ trợ ghi MP4</Banner> : null}
+      {lowStorage ? <Banner kind="danger">Bộ nhớ còn {formatBytes(free)}</Banner> : null}
       {rec.error ? <Banner kind="error">{rec.error}</Banner> : null}
       {error ? <Banner kind="error">{error}</Banner> : null}
 
       <div className="viewfinder">
         <video ref={videoRef} autoPlay muted playsInline className={rec.facing === 'front' ? 'mirror' : ''} />
-        {recording ? (
-          <div className="rec-overlay">
-            <span className="rec-dot" /> {formatDuration(elapsed)}
-          </div>
-        ) : null}
+        <div className="vf-top">
+          {recording ? (
+            <span className="rec-overlay">
+              <span className="rec-dot" /> {formatDuration(elapsed)}
+            </span>
+          ) : null}
+          <span className="vf-chip tabular">
+            {rec.config.resolution} · {rec.config.fps}fps
+          </span>
+        </div>
         <div className="viewfinder-bar">
-          <button className="round-btn" onClick={flip} disabled={recording} title="Lật camera trước/sau">
-            ⇄
+          <button
+            className={`round-btn ${flipClass}`}
+            onClick={() => {
+              flipAnim();
+              void flip();
+            }}
+            disabled={recording}
+            title="Lật camera"
+            aria-label="Lật camera"
+          >
+            <IconFlip size={20} />
           </button>
           <button
             className={`shutter ${recording ? 'on' : ''}`}
             onClick={toggleRecord}
             disabled={agent.inRoom || !mp4 || (!recording && lowStorage)}
-            title={agent.inRoom ? 'Đang được điều khiển từ xa — nút quay bị khóa' : recording ? 'Dừng' : 'Quay'}
+            title={agent.inRoom ? 'Đang được điều khiển từ xa' : recording ? 'Dừng' : 'Quay'}
           />
           <span className="round-btn ghost">{rec.facing === 'front' ? 'Trước' : 'Sau'}</span>
         </div>
@@ -155,10 +176,10 @@ function CameraView({ runtime }: { runtime: RemoteRuntime }) {
 
       {!agent.inRoom ? (
         <form className="card form" onSubmit={join}>
-          <h2>Vào phòng điều khiển</h2>
+          <h2>Tham gia phòng</h2>
           <div className="row-2">
             <label className="field">
-              <span>Mã mời (6 ký tự)</span>
+              <span>Mã mời</span>
               <input value={code} maxLength={6} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="8F2A1C" className="code-input" autoCapitalize="characters" />
             </label>
             <label className="field">
@@ -168,15 +189,15 @@ function CameraView({ runtime }: { runtime: RemoteRuntime }) {
           </div>
           <label className="check-row">
             <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-            <span>Tôi đồng ý cho Controller điều khiển bắt đầu / dừng quay trên thiết bị này</span>
+            <span>Cho phép điều khiển quay</span>
           </label>
           <button className="btn btn-primary" disabled={busy}>
             Tham gia
           </button>
         </form>
       ) : (
-        <div className="card small muted">
-          Lệnh gần nhất: {agent.lastCommand ? `${agent.lastCommand.type} lúc ${new Date(agent.lastCommand.at).toLocaleTimeString('vi-VN')}` : 'chưa có'} · Lệch đồng hồ với server: {agent.clockOffsetMs} ms ·{' '}
+        <div className="card small muted inline-icon">
+          <span className={`status-dot ${agent.online ? 'on' : 'off'}`} />
           {agent.online ? 'Đã kết nối' : 'Mất kết nối'}
         </div>
       )}

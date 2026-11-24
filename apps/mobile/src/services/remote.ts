@@ -37,8 +37,10 @@ export const remoteAgent = new RemoteAgent({
   recorder: cameraBridge,
   getDeviceStatus,
   getUploadStatus: uploadManager.syncStatus,
+  // Vào/rời phòng hoặc bắt đầu quay: quên kết quả "Đã lưu clip / Đã upload / Lỗi" của clip trước.
+  onStatusReset: () => uploadManager.resetResult(),
   onSessionRevoked: () => {
-    void session.clear('Phiên đăng nhập đã bị thu hồi, vui lòng đăng nhập lại');
+    void session.clear('Phiên đã hết hạn');
   },
 });
 

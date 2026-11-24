@@ -21,6 +21,8 @@ export interface RecorderState {
   facing: CameraFacing;
   recording: boolean;
   error: string | null;
+  /** Cấu hình quay hiện tại (Controller chọn trong menu, hoặc mặc định khi quay độc lập). */
+  config: { resolution: string; fps: number };
 }
 
 interface Active {
@@ -41,7 +43,7 @@ interface Active {
  * MediaRecorder ghi MP4 dạng fragmented (start(timeslice)) vào IndexedDB.
  */
 export class WebRecorder implements RecorderAdapter {
-  private state: RecorderState = { stream: null, facing: 'back', recording: false, error: null };
+  private state: RecorderState = { stream: null, facing: 'back', recording: false, error: null, config: { resolution: '1920x1080', fps: 30 } };
   private readonly emitter = new Emitter<RecorderState>();
   private active: Active | null = null;
   private resolution = '1920x1080';
@@ -50,6 +52,7 @@ export class WebRecorder implements RecorderAdapter {
   constructor(
     private readonly ctx: {
       getDeviceId: () => string | null;
+      getUserId: () => string;
       getCameraName: () => string;
       onSaved: (clip: ClipRecord) => void;
     },
@@ -90,6 +93,38 @@ export class WebRecorder implements RecorderAdapter {
     }
   }
 
+  private snapVideo: HTMLVideoElement | null = null;
+  private snapCanvas: HTMLCanvasElement | null = null;
+
+  /** Ảnh JPEG nhỏ của khung hình hiện tại (xem trước trên màn Controller). */
+  snapshot(width = 320, quality = 0.55): string | null {
+    const stream = this.state.stream;
+    if (!stream?.active) return null;
+    if (!this.snapVideo) {
+      this.snapVideo = document.createElement('video');
+      this.snapVideo.muted = true;
+      this.snapVideo.playsInline = true;
+    }
+    const v = this.snapVideo;
+    if (v.srcObject !== stream) {
+      v.srcObject = stream;
+      void v.play().catch(() => undefined);
+    }
+    if (!v.videoWidth) return null;
+    const c = (this.snapCanvas ??= document.createElement('canvas'));
+    c.width = width;
+    c.height = Math.round((v.videoHeight / v.videoWidth) * width);
+    const ctx = c.getContext('2d');
+    if (!ctx) return null;
+    if (this.state.facing === 'front') {
+      ctx.setTransform(-1, 0, 0, 1, c.width, 0); // gương như khung xem trên máy
+    } else {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+    ctx.drawImage(v, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', quality);
+  }
+
   releaseStream() {
     if (this.active) return;
     this.state.stream?.getTracks().forEach((t) => t.stop());
@@ -104,12 +139,22 @@ export class WebRecorder implements RecorderAdapter {
     await this.openStream(next);
   }
 
+  /** Controller đổi cấu hình khi chưa quay: mở lại camera theo độ phân giải / fps mới. */
+  applyConfig(config: { resolution: string; fps: number }) {
+    if (this.active || (config.resolution === this.resolution && config.fps === this.fps)) return;
+    this.resolution = config.resolution;
+    this.fps = config.fps;
+    this.set({ config: { ...config } });
+    if (this.state.stream) void this.openStream(this.state.facing).catch(() => undefined);
+  }
+
   async startRecording(opts: StartRecordingOptions): Promise<void> {
     const mimeType = supportedMp4Type();
     if (!mimeType) throw new Error('MP4_NOT_SUPPORTED');
     if (opts.resolution !== this.resolution || opts.fps !== this.fps) {
       this.resolution = opts.resolution;
       this.fps = opts.fps;
+      this.set({ config: { resolution: opts.resolution, fps: opts.fps } });
       if (this.state.stream) await this.openStream(this.state.facing);
     }
     const stream = await this.ensureStream();
@@ -171,6 +216,7 @@ export class WebRecorder implements RecorderAdapter {
   private record(a: Active, mimeType: string, resolution: string, finalized: boolean, durationMs = 0): ClipRecord {
     return {
       uid: a.uid,
+      userId: this.ctx.getUserId(),
       baseName: a.baseName,
       fileName: `${a.baseName}.mp4`,
       mimeType: mimeType.split(';')[0],

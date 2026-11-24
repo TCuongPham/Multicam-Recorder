@@ -1,7 +1,8 @@
 import { AppState, type AppStateStatus } from 'react-native';
-import { Emitter, connectRealtime } from '@multicam/shared';
+import { Emitter, connectRealtime, type RealtimeConnection } from '@multicam/shared';
 import { api } from './api';
 import { registerBackgroundUpload, unregisterBackgroundUpload } from './background';
+import { previewStore } from './previews';
 import { remoteAgent } from './remote';
 import { session, type SessionState } from './session';
 import { uploadManager } from './upload';
@@ -9,15 +10,25 @@ import { uploadManager } from './upload';
 /** Controller: server báo phòng vừa đổi (qua socket) → màn Phòng làm mới ngay. */
 export const roomChanged = new Emitter<{ room_id: string; revision: number }>();
 
-let disconnectRealtime: (() => void) | null = null;
+let realtime: RealtimeConnection | null = null;
 let activeKey: string | null = null;
 
 function stopAll() {
   remoteAgent.stop();
   selfLeftAt = Date.now();
   remoteAgent.markLeftRoom(); // không giữ trạng thái phòng của phiên cũ
-  disconnectRealtime?.();
-  disconnectRealtime = null;
+  realtime?.();
+  realtime = null;
+  previewStore.clear();
+}
+
+/** Remote: gửi một khung hình xem trước (JPEG data URL) tới Controller qua socket. */
+export function sendPreviewFrame(dataUrl: string) {
+  realtime?.sendPreview(dataUrl);
+}
+
+export function isRealtimeConnected(): boolean {
+  return realtime?.isConnected() ?? false;
 }
 
 function applySession(s: SessionState) {
@@ -33,20 +44,21 @@ function applySession(s: SessionState) {
   const info = s.info;
   if (info.role === 'remote') {
     if (info.deviceId) void remoteAgent.start(info.deviceId);
-    disconnectRealtime = connectRealtime({
+    realtime = connectRealtime({
       baseUrl: api.baseUrl,
       getToken: () => api.getAccessToken(),
       onCommand: (cmd) => remoteAgent.handlePushedCommand(cmd),
-      onSessionRevoked: () => void session.clear('Phiên đăng nhập đã bị thu hồi, vui lòng đăng nhập lại'),
+      onSessionRevoked: () => void session.clear('Phiên đã hết hạn'),
     });
     uploadManager.kick({ force: true });
     void registerBackgroundUpload();
   } else {
-    disconnectRealtime = connectRealtime({
+    realtime = connectRealtime({
       baseUrl: api.baseUrl,
       getToken: () => api.getAccessToken(),
       onRoomChanged: (p) => roomChanged.emit(p),
-      onSessionRevoked: () => void session.clear('Phiên đăng nhập đã bị thu hồi, vui lòng đăng nhập lại'),
+      onPreview: (frame) => previewStore.push(frame),
+      onSessionRevoked: () => void session.clear('Phiên đã hết hạn'),
     });
   }
 }
@@ -114,5 +126,5 @@ export async function signOut(): Promise<void> {
 export async function deleteAccount(password: string): Promise<void> {
   await leaveCurrentRoom().catch(() => undefined);
   await api.deleteAccount(password);
-  await session.clear('Tài khoản đã được xóa vĩnh viễn');
+  await session.clear('Đã xóa tài khoản');
 }

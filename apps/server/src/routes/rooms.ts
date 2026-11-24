@@ -8,6 +8,7 @@ import {
   kickMemberSchema,
   leaveRoomSchema,
   paginationSchema,
+  recordingConfigSchema,
   startRecordingSchema,
   stopRecordingSchema,
   switchCameraSchema,
@@ -20,7 +21,18 @@ import { env } from '../env';
 import { newId, newInviteCode, newSessionCode } from '../lib/ids';
 import { fail, iso, parse, send } from '../lib/http';
 import { auth, requireAuth, requireController } from '../middleware/auth';
-import { activeMembers, activeMembership, bumpRevision, finalizeRoom, markMemberLeft, queueCommand } from '../services/rooms';
+import { forgetMembership, notifyRoomChanged, pushCommand } from '../services/realtime';
+import {
+  activeMembers,
+  activeMembership,
+  bumpRevision,
+  expireSessionIfDue,
+  finalizeRoom,
+  markMemberLeft,
+  parseConfig,
+  queueCommand,
+  touchMember,
+} from '../services/rooms';
 
 export const roomsRouter = Router();
 roomsRouter.use(['/rooms', '/devices'], requireAuth);
@@ -145,20 +157,29 @@ roomsRouter.post('/rooms/join', async (req, res) => {
   if (!member) {
     const count = await prisma.roomMember.count({ where: { roomId: room.id, leftAt: null } });
     if (count >= room.maxMembers) throw fail(Codes.ROOM_FULL);
-    const bumped = await bumpRevision(room.id);
-    await prisma.device.update({ where: { id: device.id }, data: { cameraName: body.camera_name, lastSeen: new Date() } });
-    const created = await prisma.roomMember.create({
-      data: {
-        id: newId('mb', 8),
-        roomId: room.id,
-        deviceId: device.id,
-        userId: a.userId,
-        cameraName: body.camera_name,
-        grantControl: true,
-        joinedRev: bumped.revision,
-        updatedRev: bumped.revision,
-      },
+    // Vào phòng mới: xóa trạng thái "Đã lưu clip / Đã upload / lỗi" còn sót của phiên trước.
+    const resetStatus = device.recordingState === 'recording' ? {} : { recordingState: 'idle', elapsedMs: 0, localVideoUid: null };
+    await prisma.device.update({
+      where: { id: device.id },
+      data: { cameraName: body.camera_name, lastSeen: new Date(), uploadState: 'none', uploadPercent: 0, errorCode: null, ...resetStatus },
     });
+    const created = await prisma.$transaction(async (tx) => {
+      const bumped = await tx.room.update({ where: { id: room.id }, data: { revision: { increment: 1 } } });
+      return tx.roomMember.create({
+        data: {
+          id: newId('mb', 8),
+          roomId: room.id,
+          deviceId: device.id,
+          userId: a.userId,
+          cameraName: body.camera_name,
+          grantControl: true,
+          joinedRev: bumped.revision,
+          updatedRev: bumped.revision,
+        },
+      });
+    });
+    notifyRoomChanged(room.ownerId, room.id, room.revision + 1);
+    forgetMembership(device.id);
     member = { ...created, room };
   }
   const members = await activeMembers(room.id);
@@ -277,12 +298,20 @@ roomsRouter.post('/devices/:device_id/sync', async (req, res) => {
     },
   });
 
-  const membership = await activeMembership(device.id);
+  let membership = await activeMembership(device.id);
+  if (membership?.room.status === 'recording') {
+    const room = await expireSessionIfDue(membership.room);
+    if (room !== membership.room) membership = { ...membership, room };
+  }
   if (membership) {
     // Chỉ báo Controller qua socket khi trạng thái quay/upload đổi; còn lại để nhịp sync_room tự lấy.
-    const changed = device.recordingState !== body.recording_state || device.uploadState !== body.upload_state;
-    const room = await bumpRevision(membership.roomId, changed);
-    await prisma.roomMember.update({ where: { id: membership.id }, data: { updatedRev: room.revision } });
+    const changed =
+      device.recordingState !== body.recording_state ||
+      device.uploadState !== body.upload_state ||
+      device.cameraFacing !== (body.camera_facing ?? device.cameraFacing) ||
+      !device.lastSeen ||
+      Date.now() - device.lastSeen.getTime() > 10_000; // máy vừa có kết nối lại
+    await touchMember(membership.roomId, membership.id, undefined, changed);
   }
 
   const commands = await prisma.command.findMany({
@@ -299,6 +328,7 @@ roomsRouter.post('/devices/:device_id/sync', async (req, res) => {
       room_name: membership?.room.name ?? null,
       member_id: membership?.id ?? null,
       session_id: membership?.room.currentSessionId ?? null,
+      config: parseConfig(membership?.room.config),
     },
     pending_commands: commands.map((c) => ({
       command_id: c.commandId,
@@ -312,7 +342,7 @@ roomsRouter.post('/devices/:device_id/sync', async (req, res) => {
 
 // 17. sync_room — Controller lấy trạng thái mới nhất của cả phòng; since = revision lần trước.
 roomsRouter.get('/rooms/:room_id/sync', requireController, async (req, res) => {
-  const room = await ownedRoom(req);
+  const room = await expireSessionIfDue(await ownedRoom(req));
   const q = parse(syncRoomSchema, req.query);
   const since = q.since;
   const [members, joined, left] = await Promise.all([
@@ -335,6 +365,8 @@ roomsRouter.get('/rooms/:room_id/sync', requireController, async (req, res) => {
       session_id: room.currentSessionId,
       started_at: iso(session?.startedAt),
       invite_code: room.inviteCode,
+      // Đang quay: cấu hình của phiên (có max_duration để Controller tự dừng đúng giờ).
+      config: parseConfig(session?.config ?? room.config),
     },
     members: members.map(syncMember),
     joined: joined.map((m) => m.id),
@@ -358,7 +390,10 @@ roomsRouter.post('/rooms/:room_id/recording/start', requireController, async (re
     const session = await prisma.recordingSession.create({
       data: { id: newSessionCode(), roomId: room.id, config: JSON.stringify(body.config) },
     });
-    await prisma.room.update({ where: { id: room.id }, data: { status: 'recording', currentSessionId: session.id } });
+    await prisma.room.update({
+      where: { id: room.id },
+      data: { status: 'recording', currentSessionId: session.id, config: JSON.stringify(body.config) },
+    });
     const commandId = await queueCommand({
       roomId: room.id,
       deviceIds: online.map((m) => m.deviceId),
@@ -386,34 +421,65 @@ roomsRouter.post('/rooms/:room_id/recording/stop', requireController, async (req
       type: 'stop_record',
       payload: { session_id: room.currentSessionId },
     });
-    const stoppedAt = new Date();
+    const session = await prisma.recordingSession.findUnique({ where: { id: room.currentSessionId } });
+    // Có giới hạn thời gian thì phiên không dài quá giới hạn (máy Remote đã tự dừng đúng lúc).
+    const max = parseConfig(session?.config)?.max_duration ?? 0;
+    const limitAt = session && max > 0 ? session.startedAt.getTime() + max * 1000 : Infinity;
+    const stoppedAt = new Date(Math.min(Date.now(), limitAt));
     if (body.target === 'all' || members.length === all.length) {
       await prisma.recordingSession.update({ where: { id: room.currentSessionId }, data: { stoppedAt } });
       await prisma.room.update({ where: { id: room.id }, data: { status: 'open', currentSessionId: null } });
     }
     await bumpRevision(room.id);
+    // Tổng kết chỉ gồm các máy đã nhận lệnh START của phiên này (máy vào phòng sau thì không có clip).
+    const started = await prisma.command.findMany({
+      where: { roomId: room.id, type: 'start_record', payload: { contains: room.currentSessionId } },
+      select: { deviceId: true },
+    });
+    const startedDevices = new Set(started.map((c) => c.deviceId));
     return {
       session_id: room.currentSessionId,
+      started_at: session?.startedAt.toISOString(),
       stopped_at: stoppedAt.toISOString(),
       command_id: commandId,
-      results: members.map((m) => ({
-        member_id: m.id,
-        local_video_uid: m.device.localVideoUid,
-        duration_ms: String(m.device.elapsedMs),
-        size: null,
-        status: m.device.recordingState === 'recording' ? 'saved' : m.device.recordingState,
-      })),
+      results: members
+        .filter((m) => startedDevices.has(m.deviceId))
+        .map((m) => ({
+          member_id: m.id,
+          device_id: m.deviceId,
+          camera_name: m.cameraName,
+          is_online: m.device.lastSeen && Date.now() - m.device.lastSeen.getTime() < ONLINE_TIMEOUT_MS ? '1' : '0',
+          local_video_uid: m.device.localVideoUid,
+          duration_ms: String(session ? stoppedAt.getTime() - session.startedAt.getTime() : m.device.elapsedMs),
+          size: null,
+          status: m.device.recordingState === 'recording' ? 'saved' : m.device.recordingState,
+        })),
     };
   });
   send(res, data, duplicate ? Codes.ACTION_DONE_PREVIOUSLY : Codes.OK);
 });
 
-// Mở rộng: Controller ra lệnh lật camera trước/sau cho máy Remote.
+// Mở rộng: Controller đổi cấu hình quay trong menu → lưu vào phòng và báo ngay cho các máy Remote.
+roomsRouter.post('/rooms/:room_id/config', requireController, async (req, res) => {
+  const room = await ownedRoom(req);
+  const config = parse(recordingConfigSchema, req.body);
+  if (room.status === 'recording') throw fail(Codes.INVALID_SESSION_STATE);
+  await prisma.room.update({ where: { id: room.id }, data: { config: JSON.stringify(config) } });
+  // Không cần xếp hàng đợi: máy Remote đọc lại cấu hình ở mỗi lần sync_device; socket chỉ để cập nhật tức thì.
+  const issuedAt = new Date().toISOString();
+  for (const m of await activeMembers(room.id)) {
+    pushCommand(m.deviceId, { command_id: newId('cfg', 10), type: 'set_config', payload: config, issued_at: issuedAt });
+  }
+  send(res, { config });
+});
+
+// Mở rộng: Controller ra lệnh lật camera trước/sau cho máy Remote (không cho lật khi đang quay).
 roomsRouter.post('/rooms/:room_id/camera', requireController, async (req, res) => {
   const a = auth(req);
   const room = await ownedRoom(req);
   const body = parse(switchCameraSchema, req.body);
   const { data, duplicate } = await dedupe(a.userId, body.client_command_id, 'switch_camera', async () => {
+    if (room.status === 'recording') throw fail(Codes.INVALID_SESSION_STATE);
     const members = pickTargets(await activeMembers(room.id), body.target);
     if (!members.length) throw fail(Codes.NO_DATA);
     const commandId = await queueCommand({

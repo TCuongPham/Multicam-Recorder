@@ -1,7 +1,7 @@
 import type { ApiClient, ApiError } from '../api';
 import { Codes } from '../codes';
 import { COMMAND_TTL_MS, DEFAULT_SYNC_SECONDS, type CameraFacing, type RecordingState, type UploadState } from '../constants';
-import type { PendingCommand, SyncDeviceResult } from '../types';
+import type { PendingCommand, RoomConfig, SyncDeviceResult } from '../types';
 import { Emitter, type KeyValueStore } from '../utils';
 
 export interface StartRecordingOptions {
@@ -19,6 +19,8 @@ export interface RecorderAdapter {
   /** Dừng quay; file được nền tảng tự lưu rồi gọi `agent.reportRecording('saved', ...)`. */
   stopRecording(): Promise<void>;
   switchCamera(facing: CameraFacing | 'toggle'): Promise<void>;
+  /** Controller đổi cấu hình trong menu (chỉ gọi khi đang không quay): chuẩn bị camera theo cấu hình mới. */
+  applyConfig?(config: { resolution: string; fps: number }): void;
 }
 
 export interface DeviceStatus {
@@ -35,6 +37,8 @@ export interface RemoteAgentDeps {
   getDeviceStatus: () => Promise<DeviceStatus>;
   getUploadStatus: () => { upload_state: UploadState; upload_percent: number };
   onSessionRevoked?: () => void;
+  /** Bắt đầu phiên mới (vào phòng / bắt đầu quay): xóa kết quả upload cũ để Controller không thấy trạng thái của lần trước. */
+  onStatusReset?: () => void;
 }
 
 export interface RemoteAgentState {
@@ -47,6 +51,8 @@ export interface RemoteAgentState {
   roomName: string | null;
   memberId: string | null;
   roomSessionId: string | null;
+  /** Cấu hình quay Controller đang chọn cho phòng. */
+  roomConfig: RoomConfig | null;
   recordingState: RecordingState;
   recordingSessionId: string | null;
   recordingStartedAt: number | null;
@@ -59,7 +65,8 @@ export interface RemoteAgentState {
   lastError: string | null;
 }
 
-const EXECUTED_KEY = 'remote.executed_commands';
+// Tách theo thiết bị: nhiều tài khoản / tab trên cùng một máy không dùng chung danh sách lệnh đã chạy.
+const executedKey = (deviceId: string) => `remote.executed_commands.${deviceId}`;
 const MAX_EXECUTED = 200;
 
 /**
@@ -78,6 +85,7 @@ export class RemoteAgent {
     roomName: null,
     memberId: null,
     roomSessionId: null,
+    roomConfig: null,
     recordingState: 'idle',
     recordingSessionId: null,
     recordingStartedAt: null,
@@ -93,6 +101,10 @@ export class RemoteAgent {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
   private inFlight = false;
+  /** Đã gửi lệnh dừng cho recorder, đang chờ file ghi xong: không gọi dừng lần hai (vision-camera báo lỗi). */
+  private stoppingAt = 0;
+  /** Cấu hình (resolution|fps) đã báo cho recorder, tránh báo lại ở mỗi nhịp sync. */
+  private appliedConfigKey = '';
   private syncAgain = false;
   private executed: string[] = [];
   private lastCommandId: string | null = null;
@@ -111,7 +123,7 @@ export class RemoteAgent {
   async start(deviceId: string) {
     if (this.state.running && this.state.deviceId === deviceId) return;
     try {
-      this.executed = JSON.parse((await this.deps.kv.get(EXECUTED_KEY)) || '[]');
+      this.executed = JSON.parse((await this.deps.kv.get(executedKey(deviceId))) || '[]');
     } catch {
       this.executed = [];
     }
@@ -218,6 +230,7 @@ export class RemoteAgent {
       memberId: inRoom ? (rs.member_id ?? null) : null,
       roomSessionId: inRoom ? rs.session_id : null,
     });
+    if (inRoom && rs.config) this.applyRoomConfig(rs.config);
 
     if (res.session_revoked === '1') {
       this.stop();
@@ -248,7 +261,7 @@ export class RemoteAgent {
     this.executed.push(id);
     if (this.executed.length > MAX_EXECUTED) this.executed = this.executed.slice(-MAX_EXECUTED);
     this.lastCommandId = id;
-    await this.deps.kv.set(EXECUTED_KEY, JSON.stringify(this.executed));
+    if (this.state.deviceId) await this.deps.kv.set(executedKey(this.state.deviceId), JSON.stringify(this.executed));
   }
 
   private async execute(cmd: PendingCommand) {
@@ -274,12 +287,30 @@ export class RemoteAgent {
       case 'switch_camera':
         await this.deps.recorder.switchCamera((payload.facing as CameraFacing | 'toggle') ?? 'toggle').catch(() => undefined);
         break;
+      case 'set_config':
+        this.applyRoomConfig({
+          resolution: String(payload.resolution ?? '1920x1080'),
+          fps: Number(payload.fps ?? 30),
+          max_duration: Number(payload.max_duration ?? 0),
+        });
+        return; // không cần sync lại
       case 'leave_room':
         if (this.state.recordingState === 'recording') await this.stopRecording();
-        this.set({ inRoom: false, roomId: null, roomName: null, memberId: null, roomSessionId: null });
+        this.markLeftRoom();
         break;
     }
     void this.syncNow();
+  }
+
+  private applyRoomConfig(config: RoomConfig) {
+    const prev = this.state.roomConfig;
+    const same = prev && prev.resolution === config.resolution && prev.fps === config.fps && prev.max_duration === config.max_duration;
+    if (!same) this.set({ roomConfig: config });
+    // Đang quay thì giữ nguyên camera; cấu hình mới áp dụng sau khi dừng. Chỉ báo recorder khi thật sự đổi.
+    const key = `${config.resolution}|${config.fps}`;
+    if (this.state.recordingState === 'recording' || key === this.appliedConfigKey) return;
+    this.appliedConfigKey = key;
+    this.deps.recorder.applyConfig?.({ resolution: config.resolution, fps: config.fps });
   }
 
   /** Bắt đầu quay (do lệnh Controller hoặc người dùng bấm khi không ở trong phòng). */
@@ -293,6 +324,9 @@ export class RemoteAgent {
         serverStartedAt: new Date(this.serverNow()).toISOString(),
         clockOffsetMs: this.state.clockOffsetMs,
       });
+      this.deps.onStatusReset?.();
+      this.stoppingAt = 0;
+      this.appliedConfigKey = `${opts.resolution}|${opts.fps}`; // recorder đã chuyển sang cấu hình của lần quay này
       this.set({
         recordingState: 'recording',
         recordingSessionId: opts.sessionId,
@@ -312,16 +346,21 @@ export class RemoteAgent {
   async stopRecording() {
     if (this.maxDurationTimer) clearTimeout(this.maxDurationTimer);
     this.maxDurationTimer = null;
-    if (this.state.recordingState !== 'recording') return;
+    // Lệnh STOP, hẹn giờ giới hạn và lần sync thấy phiên đã kết thúc có thể cùng gọi tới đây: chỉ dừng một lần.
+    // Quá 15 giây mà file chưa xong thì cho dừng lại lần nữa.
+    if (this.state.recordingState !== 'recording' || Date.now() - this.stoppingAt < 15_000) return;
+    this.stoppingAt = Date.now();
     try {
       await this.deps.recorder.stopRecording();
     } catch (e) {
+      this.stoppingAt = 0;
       this.reportRecording('failed', { errorCode: (e as Error)?.message?.slice(0, 60) || 'RECORD_STOP_FAILED' });
     }
   }
 
   /** Nền tảng báo kết quả ghi file (saved kèm local_video_uid, hoặc failed). */
   reportRecording(state: RecordingState, extra: { localVideoUid?: string; errorCode?: string } = {}) {
+    if (state !== 'recording') this.stoppingAt = 0;
     this.set({
       recordingState: state,
       recordingStartedAt: state === 'recording' ? this.state.recordingStartedAt : null,
@@ -332,13 +371,22 @@ export class RemoteAgent {
     void this.syncNow();
   }
 
+  /** Xóa trạng thái "Đã lưu clip / Đã upload / Lỗi" của lần trước (khi vào hoặc rời phòng). */
+  private resetFinishedStatus() {
+    if (this.state.recordingState === 'recording') return;
+    this.deps.onStatusReset?.();
+    this.set({ recordingState: 'idle', localVideoUid: null, errorCode: null });
+  }
+
   /** Rời phòng chủ động (đã gọi API leave_room). */
   markLeftRoom() {
-    this.set({ inRoom: false, roomId: null, roomName: null, memberId: null, roomSessionId: null });
+    this.set({ inRoom: false, roomId: null, roomName: null, memberId: null, roomSessionId: null, roomConfig: null });
+    this.resetFinishedStatus();
   }
 
   markJoinedRoom(roomId: string, roomName: string, memberId: string) {
     this.set({ inRoom: true, roomId, roomName, memberId });
+    this.resetFinishedStatus();
     void this.syncNow();
   }
 }

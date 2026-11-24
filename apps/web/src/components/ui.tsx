@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ApiError } from '@multicam/shared';
+import { IconX } from './icons';
 
 export function errorText(e: unknown): string {
   if (e instanceof ApiError) return e.userMessage;
@@ -60,7 +61,7 @@ export function Modal({ title, onClose, children, footer }: { title: string; onC
         <header className="modal-header">
           <h3>{title}</h3>
           <button className="icon-btn" onClick={onClose} aria-label="Đóng">
-            ✕
+            <IconX />
           </button>
         </header>
         <div className="modal-body">{children}</div>
@@ -116,6 +117,23 @@ export function useCountdown(): [number, (seconds: number) => void] {
     }, 250);
   };
   return [left, start];
+}
+
+/** Chạy một hiệu ứng CSS một lần mỗi lần bấm (vd. icon lật xoay nửa vòng). */
+export function useOneShot(className: string, durationMs = 600): [string, () => void] {
+  const [on, setOn] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
+  const trigger = () => {
+    setOn(false);
+    // Bỏ class rồi gắn lại ở frame sau để animation chạy lại cả khi bấm liên tiếp.
+    requestAnimationFrame(() => {
+      setOn(true);
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setOn(false), durationMs);
+    });
+  };
+  return [on ? className : '', trigger];
 }
 
 export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {

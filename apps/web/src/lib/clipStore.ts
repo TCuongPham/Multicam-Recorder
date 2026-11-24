@@ -6,6 +6,8 @@ import type { UploadMetadata } from '@multicam/shared';
  */
 export interface ClipRecord {
   uid: string;
+  /** Tài khoản đã quay clip: tab mới đăng nhập cùng tài khoản vẫn upload tiếp được clip dở. */
+  userId?: string;
   baseName: string;
   fileName: string;
   mimeType: string;
@@ -69,6 +71,11 @@ export const clipStore = {
     const range = IDBKeyRange.bound([uid, 0], [uid, Number.MAX_SAFE_INTEGER]);
     const parts = await tx<Blob[]>(['parts'], 'readonly', (t) => t.objectStore('parts').getAll(range));
     return new Blob(parts, { type: mimeType });
+  },
+  /** Số khối đã ghi (mỗi khối ≈ 1 giây) — dùng ước lượng thời lượng clip khôi phục. */
+  partCount(uid: string) {
+    const range = IDBKeyRange.bound([uid, 0], [uid, Number.MAX_SAFE_INTEGER]);
+    return tx<number>(['parts'], 'readonly', (t) => t.objectStore('parts').count(range));
   },
   async remove(uid: string) {
     const range = IDBKeyRange.bound([uid, 0], [uid, Number.MAX_SAFE_INTEGER]);

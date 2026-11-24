@@ -194,6 +194,7 @@ export type RecordingConfig = z.infer<typeof recordingConfigSchema>;
 export type StartRecordingInput = z.input<typeof startRecordingSchema>;
 export type StopRecordingInput = z.input<typeof stopRecordingSchema>;
 export type SwitchCameraInput = z.input<typeof switchCameraSchema>;
+export type RecordingConfigInput = z.input<typeof recordingConfigSchema>;
 export type UploadMetadata = z.infer<typeof uploadMetadataSchema>;
 export type InitUploadInput = z.infer<typeof initUploadSchema>;
 export type ListVideosInput = z.input<typeof listVideosSchema>;

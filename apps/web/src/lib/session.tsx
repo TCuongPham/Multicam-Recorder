@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { CheckVerifyResult, LoginResult } from '@multicam/shared';
-import { api, loadSession, onSessionExpired, saveSession, type Session } from './platform';
+import { api, clearTabCache, loadSession, onSessionExpired, saveSession, type Session } from './platform';
 import { getRemoteRuntime, startRemoteRuntime, stopRemoteRuntime, type RemoteRuntime } from './remoteRuntime';
 
 interface SessionContextValue {
@@ -23,7 +23,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   // Tạo "máy Remote" ngay trong lần render đầu (idempotent theo deviceId) để màn hình không gặp runtime null.
   const runtime: RemoteRuntime | null = useMemo(
-    () => (session?.role === 'remote' ? startRemoteRuntime(session.deviceId, session.cameraName, () => revokedRef.current()) : null),
+    () =>
+      session?.role === 'remote'
+        ? startRemoteRuntime({
+            deviceId: session.deviceId,
+            userId: session.user.id,
+            cameraName: session.cameraName,
+            onSessionRevoked: () => revokedRef.current(),
+          })
+        : null,
     [session],
   );
 
@@ -40,13 +48,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       stopRemoteRuntime();
       saveSession(null);
       // Cache thư viện offline không được lộ sang tài khoản đăng nhập sau.
-      try {
-        Object.keys(localStorage)
-          .filter((k) => k.startsWith('mc.videos.cache.'))
-          .forEach((k) => localStorage.removeItem(k));
-      } catch {
-        // localStorage bị chặn
-      }
+      clearTabCache('videos.cache.');
       queryClient.clear();
       setSession(null);
       if (opts.message) setNotice(opts.message);
@@ -55,10 +57,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
-    onSessionExpired(() => void signOut({ callApi: false, message: 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại' }));
+    onSessionExpired(() => void signOut({ callApi: false, message: 'Phiên đã hết hạn' }));
   }, [signOut]);
 
-  revokedRef.current = () => void signOut({ callApi: false, message: 'Phiên đăng nhập đã bị thu hồi' });
+  revokedRef.current = () => void signOut({ callApi: false, message: 'Phiên đã hết hạn' });
 
   const signIn = useCallback((res: LoginResult | CheckVerifyResult) => {
     const user = 'user' in res && res.user ? res.user : null;

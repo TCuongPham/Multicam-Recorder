@@ -13,7 +13,6 @@ export function ForgotPasswordScreen({ navigation }: AuthScreenProps<'Forgot'>) 
   const [account, setAccount] = useState('');
   const [code, setCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
   const [hint, setHint] = useState<{ masked: string; code: string } | null>(null);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const [loading, setLoading] = useState(false);
@@ -35,9 +34,9 @@ export function ForgotPasswordScreen({ navigation }: AuthScreenProps<'Forgot'>) 
       if (isApiError(e, Codes.LIMITED_ACCESS)) {
         start(Number((e.data as { retry_after?: number } | null)?.retry_after) || VERIFY_RESEND_SECONDS);
         setStep('reset');
-        setErrors({ form: 'Mã đã được gửi trước đó, vui lòng dùng mã cũ hoặc chờ để gửi lại.' });
+        setErrors({ form: 'Đã gửi mã trước đó' });
       } else if (isApiError(e, Codes.USER_NOT_VALIDATED)) {
-        setErrors({ account: 'Tài khoản không tồn tại hoặc chưa kích hoạt' });
+        setErrors({ account: 'Tài khoản không tồn tại' });
       } else {
         setErrors({ account: errorMessage(e) });
       }
@@ -49,20 +48,19 @@ export function ForgotPasswordScreen({ navigation }: AuthScreenProps<'Forgot'>) 
   async function reset() {
     const next: Record<string, string> = {};
     const c = verifyCodeSchema.safeParse(code.trim());
-    if (!c.success) next.code = c.error.issues[0]?.message ?? 'Mã xác thực gồm 6 số';
+    if (!c.success) next.code = c.error.issues[0]?.message ?? 'Mã gồm 6 số';
     const p = passwordSchema.safeParse(newPassword);
     if (!p.success) next.password = p.error.issues[0]?.message ?? 'Mật khẩu không hợp lệ';
-    if (newPassword !== confirm) next.confirm = 'Mật khẩu nhập lại không khớp';
     setErrors(next);
     if (Object.keys(next).length) return;
     setLoading(true);
     try {
       await api.forgotPassword({ ...splitAccount(account), code_verify: code.trim(), new_password: newPassword });
-      session.setNotice('Đặt lại mật khẩu thành công. Vui lòng đăng nhập bằng mật khẩu mới.');
+      session.setNotice('Đã đặt lại mật khẩu');
       navigation.popTo('Login');
     } catch (e) {
       if (isApiError(e, Codes.VERIFY_CODE_INCORRECT)) {
-        setErrors({ code: 'Mã xác thực không đúng hoặc đã hết hạn' });
+        setErrors({ code: 'Sai mã' });
         setCode('');
       } else if (isApiError(e) && e.field === 'new_password') {
         setErrors({ password: errorMessage(e) });
@@ -76,9 +74,19 @@ export function ForgotPasswordScreen({ navigation }: AuthScreenProps<'Forgot'>) 
 
   return (
     <Screen>
+      {step === 'reset' && hint ? (
+        <>
+          <Muted style={{ fontSize: 14 }}>Đã gửi mã tới {hint.masked}</Muted>
+          <Banner kind="info">
+            <Text style={{ color: colors.text }}>
+              Mã thử nghiệm: <Text style={{ fontWeight: '600', letterSpacing: 2, color: colors.accent }}>{hint.code}</Text>
+            </Text>
+          </Banner>
+        </>
+      ) : null}
       <Card>
         <Field
-          label="Email / Số điện thoại"
+          label="Email hoặc số điện thoại"
           value={account}
           onChangeText={setAccount}
           autoCapitalize="none"
@@ -87,21 +95,11 @@ export function ForgotPasswordScreen({ navigation }: AuthScreenProps<'Forgot'>) 
           error={errors.account}
         />
         {step === 'request' ? (
-          <>
-            <Muted>Mã xác thực 6 số sẽ được gửi về email hoặc SMS của bạn.</Muted>
-            <Button title="Gửi mã xác thực" onPress={requestCode} loading={loading} />
-          </>
+          <Button title="Gửi mã" onPress={requestCode} loading={loading} style={{ marginTop: 4 }} />
         ) : (
           <>
-            {hint ? (
-              <Banner kind="info">
-                <Text style={{ color: colors.primary }}>
-                  Đã gửi tới {hint.masked}. Mô phỏng — mã: <Text style={{ fontWeight: '800', letterSpacing: 2 }}>{hint.code}</Text>
-                </Text>
-              </Banner>
-            ) : null}
             <Field
-              label="Mã xác thực"
+              label="Mã 6 số"
               value={code}
               onChangeText={(v) => setCode(v.replace(/\D/g, ''))}
               keyboardType="number-pad"
@@ -114,15 +112,15 @@ export function ForgotPasswordScreen({ navigation }: AuthScreenProps<'Forgot'>) 
               onChangeText={setNewPassword}
               secureTextEntry
               autoCapitalize="none"
+              maxLength={20}
+              placeholder="6–20 ký tự"
               error={errors.password}
-              hint="6–20 ký tự chữ hoặc số"
             />
-            <Field label="Nhập lại mật khẩu mới" value={confirm} onChangeText={setConfirm} secureTextEntry autoCapitalize="none" error={errors.confirm} />
             {errors.form ? <Text style={{ color: colors.danger }}>{errors.form}</Text> : null}
-            <Button title="Đặt lại mật khẩu" onPress={reset} loading={loading} />
+            <Button title="Đặt lại" onPress={reset} loading={loading} style={{ marginTop: 4 }} />
             <Button
-              title={remaining > 0 ? `Gửi lại mã (${remaining}s)` : 'Gửi lại mã'}
-              variant="secondary"
+              title={remaining > 0 ? `Gửi lại sau ${remaining}s` : 'Gửi lại'}
+              variant="ghost"
               disabled={remaining > 0 || loading}
               onPress={requestCode}
             />

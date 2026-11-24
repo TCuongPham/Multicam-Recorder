@@ -27,13 +27,13 @@ export async function downloadVideo(video: VideoItem): Promise<void> {
   const res = await FileSystem.downloadAsync(link.download_url, toUri(tmp));
   if (res.status < 200 || res.status >= 300) {
     await RNFS.unlink(tmp).catch(() => undefined);
-    throw new Error(`Tải thất bại (HTTP ${res.status})`);
+    throw new Error(`Lỗi tải về ${res.status}`);
   }
   if (link.checksum_sha256) {
     const sum = (await RNFS.hash(tmp, 'sha256')).toLowerCase();
     if (sum !== link.checksum_sha256.toLowerCase()) {
       await RNFS.unlink(tmp).catch(() => undefined);
-      throw new Error('File tải về bị hỏng (sai checksum)');
+      throw new Error('Tệp bị hỏng');
     }
   }
   if (await RNFS.exists(dest)) await RNFS.unlink(dest);

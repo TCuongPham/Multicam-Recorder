@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Text } from 'react-native';
 import { Codes, fieldErrors, signupSchema } from '@multicam/shared';
 import { api, errorMessage, isApiError } from '../../services/api';
-import { Button, Card, Field, Muted, Row, Screen } from '../../ui/components';
+import { Button, Card, Field, Row, Screen } from '../../ui/components';
 import { colors } from '../../ui/theme';
 import type { AuthScreenProps } from '../../navigation/types';
 
@@ -33,7 +33,7 @@ export function SignupScreen({ navigation }: AuthScreenProps<'Signup'>) {
       navigation.replace('Verify', { email: res.email, autoSend: true });
     } catch (e) {
       if (isApiError(e) && e.field) {
-        const msg = e.code === Codes.USER_EXISTED ? 'Email/số điện thoại đã được đăng ký' : errorMessage(e);
+        const msg = e.code === Codes.USER_EXISTED ? 'Đã được đăng ký' : errorMessage(e);
         setErrors({ [e.field]: msg });
       } else {
         setFormError(errorMessage(e));
@@ -47,8 +47,8 @@ export function SignupScreen({ navigation }: AuthScreenProps<'Signup'>) {
     <Screen>
       <Card>
         <Row style={{ alignItems: 'flex-start' }}>
-          <Field style={{ flex: 1 }} label="Họ" value={form.last_name} onChangeText={set('last_name')} placeholder="Nguyễn" error={errors.last_name} />
-          <Field style={{ flex: 1 }} label="Tên" value={form.first_name} onChangeText={set('first_name')} placeholder="An" error={errors.first_name} />
+          <Field style={{ flex: 1 }} label="Họ" value={form.last_name} onChangeText={set('last_name')} error={errors.last_name} />
+          <Field style={{ flex: 1 }} label="Tên" value={form.first_name} onChangeText={set('first_name')} error={errors.first_name} />
         </Row>
         <Field
           label="Email"
@@ -56,7 +56,6 @@ export function SignupScreen({ navigation }: AuthScreenProps<'Signup'>) {
           onChangeText={set('email')}
           autoCapitalize="none"
           keyboardType="email-address"
-          placeholder="an.nguyen@gmail.com"
           error={errors.email}
         />
         <Field
@@ -75,12 +74,12 @@ export function SignupScreen({ navigation }: AuthScreenProps<'Signup'>) {
           secureTextEntry
           autoCapitalize="none"
           error={errors.password}
-          hint="6–20 ký tự chữ hoặc số, không trùng số điện thoại"
+          placeholder="6–20 ký tự"
         />
         {formError ? <Text style={{ color: colors.danger }}>{formError}</Text> : null}
-        <Button title="Tạo tài khoản" onPress={onSubmit} loading={loading} />
+        <Button title="Tạo tài khoản" onPress={onSubmit} loading={loading} style={{ marginTop: 4 }} />
       </Card>
-      <Muted style={{ textAlign: 'center' }}>Tài khoản tạo tại đây luôn là tài khoản máy quay (Remote).</Muted>
+      <Button title="Đã có tài khoản? Đăng nhập" variant="ghost" small onPress={() => navigation.popTo('Login')} style={{ alignSelf: 'center' }} />
     </Screen>
   );
 }

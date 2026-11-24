@@ -209,6 +209,12 @@ Tạo CSDL, seed tài khoản admin và sinh chứng chỉ HTTPS cho LAN:
 npm run setup
 ```
 
+Sau khi kéo code mới có đổi `prisma/schema.prisma` (ví dụ thêm cột), cập nhật CSDL hiện có mà không mất dữ liệu:
+
+```bash
+npm exec -w @multicam/server -- prisma db push
+```
+
 Chế độ phát triển, chạy server (cổng 3000 / 3443) và web Vite (cổng 5173):
 
 ```bash

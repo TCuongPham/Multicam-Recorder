@@ -4,9 +4,9 @@ import { useStore, useVideoLibrary } from '@multicam/shared/react';
 import { Banner, EmptyState, Modal } from '../components/ui';
 import { UploadMiniCard } from '../components/UploadMiniCard';
 import { clipStore, type ClipRecord } from '../lib/clipStore';
-import { api, localKv } from '../lib/platform';
+import { api, tabKv } from '../lib/platform';
 import { useSession } from '../lib/session';
-import { VideoCard, VideoPlayerModal } from './LibraryPage';
+import { VideoCard, VideoPlayerModal, VideoSpecs } from './LibraryPage';
 
 /** Thư viện của Remote: chỉ xem lại trong ứng dụng — không có nút tải xuống, không có nút xóa. */
 export function RemoteLibraryPage() {
@@ -18,10 +18,10 @@ export function RemoteLibraryPage() {
         <h1>Thư viện</h1>
         <div className="tabs">
           <button className={tab === 'local' ? 'active' : ''} onClick={() => setTab('local')}>
-            Trên máy này
+            Trên máy
           </button>
           <button className={tab === 'server' ? 'active' : ''} onClick={() => setTab('server')}>
-            Đã upload
+            Đã tải lên
           </button>
         </div>
       </div>
@@ -56,7 +56,7 @@ function LocalClips() {
   };
 
   if (!clips) return <div className="muted">Đang tải…</div>;
-  if (!clips.length) return <EmptyState title="Chưa có clip nào trên máy" />;
+  if (!clips.length) return <EmptyState title="Chưa có clip" />;
   return (
     <>
       <div className="video-grid">
@@ -69,12 +69,13 @@ function LocalClips() {
                 <span className="duration">{formatDuration(c.metadata.duration_ms)}</span>
               </div>
               <div className="video-info">
-                <strong>{c.metadata.session_id ? `Phiên ${c.metadata.session_id}` : 'Quay độc lập'}</strong>
+                <strong>{c.metadata.session_id ? `Phiên ${c.metadata.session_id}` : 'Quay lẻ'}</strong>
                 <span className="muted small">
                   {formatDateTime(c.metadata.recorded_at)} · {formatBytes(c.size)}
                 </span>
+                <VideoSpecs resolution={c.metadata.resolution} fps={c.metadata.fps} />
                 <span className={`small ${c.uploaded ? 'ok-text' : ''}`}>
-                  {c.uploaded ? '✓ Đã gửi lên server' : active ? `Đang upload ${Math.round(uploadState.active!.percent)}%` : 'Chờ upload'}
+                  {c.uploaded ? 'Đã tải lên' : active ? `Đang tải lên ${Math.round(uploadState.active!.percent)}%` : 'Chờ tải lên'}
                 </span>
               </div>
             </div>
@@ -97,12 +98,12 @@ function LocalClips() {
 }
 
 function ServerClips() {
-  const lib = useVideoLibrary(api, localKv, { pageSize: 24 });
+  const lib = useVideoLibrary(api, tabKv, { pageSize: 24 });
   const [playing, setPlaying] = useState<VideoItem | null>(null);
   if (lib.isLoading) return <div className="muted">Đang tải…</div>;
   return (
     <>
-      {lib.fromCache ? <Banner kind="info">Mất mạng — đang hiển thị dữ liệu đã lưu.</Banner> : null}
+      {lib.fromCache ? <Banner kind="info">Ngoại tuyến · dữ liệu đã lưu</Banner> : null}
       {!lib.videos.length ? (
         <EmptyState title="Chưa có video nào" />
       ) : (

@@ -83,5 +83,5 @@ class SessionStore {
 export const session = new SessionStore();
 
 onSessionExpired(() => {
-  if (session.getState().status === 'signedIn') void session.clear('Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại');
+  if (session.getState().status === 'signedIn') void session.clear('Phiên đã hết hạn');
 });

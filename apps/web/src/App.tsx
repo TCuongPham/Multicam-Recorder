@@ -7,6 +7,7 @@ import { RemoteLibraryPage } from './pages/RemoteLibraryPage';
 import { RoomPage } from './pages/RoomPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { useSession } from './lib/session';
+import { Logo } from './components/icons';
 import type { RemoteRuntime } from './lib/remoteRuntime';
 
 function RecordingDot({ runtime }: { runtime: RemoteRuntime }) {
@@ -23,7 +24,7 @@ function Shell() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <span className="brand-dot" />
+          <Logo />
           Multi-Cam
           <span className={`role role-${session.role}`}>{isController ? 'Controller' : 'Remote'}</span>
           {runtime ? <RecordingDot runtime={runtime} /> : null}

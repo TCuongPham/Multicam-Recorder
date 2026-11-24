@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
-import { Alert, Text } from 'react-native';
+import { Alert } from 'react-native';
 import { Codes } from '@multicam/shared';
 import { errorMessage, isApiError } from '../../services/api';
 import { deleteAccount } from '../../services/runtime';
-import { Banner, Button, Card, Field, Screen } from '../../ui/components';
-import { colors } from '../../ui/theme';
+import { Button, Card, Field, Muted, Screen, SectionTitle } from '../../ui/components';
 
 function confirmAsync(title: string, message: string, ok: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -15,7 +14,10 @@ function confirmAsync(title: string, message: string, ok: string): Promise<boole
   });
 }
 
-/** Xóa tài khoản vĩnh viễn cùng toàn bộ video đã upload — xác nhận hai lớp. */
+/**
+ * Xóa tài khoản vĩnh viễn cùng toàn bộ video đã tải lên — xác nhận hai lớp:
+ * bước 1 nhập lại mật khẩu, bước 2 hộp thoại "Xóa vĩnh viễn?". Đang ở trong phòng thì rời phòng trước.
+ */
 export function DeleteAccountScreen() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -23,18 +25,11 @@ export function DeleteAccountScreen() {
 
   async function onDelete() {
     if (!password) {
-      setError('Nhập lại mật khẩu để xác nhận');
+      setError('Nhập mật khẩu');
       return;
     }
     setError(null);
-    const first = await confirmAsync(
-      'Xóa tài khoản?',
-      'Tài khoản và TOÀN BỘ video bạn đã upload lên server sẽ bị xóa vĩnh viễn.',
-      'Tiếp tục',
-    );
-    if (!first) return;
-    const second = await confirmAsync('Xác nhận lần cuối', 'Thao tác này KHÔNG THỂ hoàn tác. Bạn chắc chắn muốn xóa?', 'Xóa vĩnh viễn');
-    if (!second) return;
+    if (!(await confirmAsync('Xóa vĩnh viễn?', 'Không thể hoàn tác.', 'Xóa'))) return;
     setLoading(true);
     try {
       await deleteAccount(password);
@@ -48,15 +43,11 @@ export function DeleteAccountScreen() {
 
   return (
     <Screen>
-      <Banner kind="danger">
-        <Text style={{ color: colors.danger }}>
-          Xóa vĩnh viễn tài khoản cùng toàn bộ video đã upload lên server. Clip đang nằm trong máy không bị ảnh hưởng.
-          Nếu máy đang ở trong phòng, ứng dụng sẽ rời phòng trước.
-        </Text>
-      </Banner>
       <Card>
+        <SectionTitle>Nhập mật khẩu</SectionTitle>
+        <Muted>Xóa vĩnh viễn tài khoản và video.</Muted>
         <Field label="Mật khẩu" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" error={error} />
-        <Button title="Xóa tài khoản" variant="danger" onPress={onDelete} loading={loading} />
+        <Button title="Xóa" variant="danger" onPress={onDelete} loading={loading} style={{ marginTop: 4 }} />
       </Card>
     </Screen>
   );

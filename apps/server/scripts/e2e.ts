@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import ffmpegPath from 'ffmpeg-static';
-import { ApiClient, ApiError, Codes, uuid, type Tokens, type TokenStore } from '@multicam/shared';
+import { ApiClient, ApiError, Codes, sleep, uuid, type Tokens, type TokenStore } from '@multicam/shared';
 
 const BASE = process.env.API_URL ?? 'http://localhost:3000';
 let passed = 0;
@@ -141,6 +141,14 @@ async function main() {
   const rsEmpty = await ctrl.syncRoom(room.room_id, rev);
   ok(rsEmpty.members.length === 0, 'sync_room since=revision chỉ trả phần thay đổi');
 
+  // Cấu hình trong menu Controller tới máy Remote trước khi quay (mở rộng).
+  await ctrl.setRoomConfig(room.room_id, { resolution: '3840x2160', fps: 60, max_duration: 0 });
+  s = await remote.syncDevice(deviceA, { recording_state: 'idle' });
+  ok(s.room_status.config?.resolution === '3840x2160' && s.room_status.config?.fps === 60, 'sync_device nhận cấu hình Controller đang chọn');
+  ok((await ctrl.syncRoom(room.room_id)).room.config?.fps === 60, 'sync_room trả lại cấu hình đã lưu của phòng');
+  const camIdle = await ctrl.switchCamera(room.room_id, { facing: 'front', client_command_id: uuid() });
+  ok(camIdle.targets.length === 1, 'lật camera khi chưa quay (lệnh mở rộng)');
+
   const startId = uuid();
   await expectCode(remote.startRecording(room.room_id, { client_command_id: startId }), Codes.NOT_ACCESS, 'Remote gọi start_recording');
   const start = await ctrl.startRecording(room.room_id, { target: 'all', config: { resolution: '1280x720', fps: 30, max_duration: 0 }, client_command_id: startId });
@@ -153,12 +161,21 @@ async function main() {
   ok(startCmd && startCmd.payload.session_id === start.session_id && s.room_status.session_id === start.session_id, 'sync_device nhận lệnh start_record');
   s = await remote.syncDevice(deviceA, { recording_state: 'recording', elapsed_ms: 3200, last_command_id: startCmd!.command_id });
   ok(!s.pending_commands.some((c) => c.command_id === startCmd!.command_id), 'lệnh đã thực hiện không bị gửi lại');
-  const cam = await ctrl.switchCamera(room.room_id, { facing: 'front', client_command_id: uuid() });
-  ok(cam.targets.length === 1, 'lật camera (lệnh mở rộng)');
+  await expectCode(ctrl.switchCamera(room.room_id, { facing: 'back', client_command_id: uuid() }), Codes.INVALID_SESSION_STATE, 'không lật camera khi đang quay');
+  await expectCode(ctrl.setRoomConfig(room.room_id, { resolution: '1920x1080', fps: 30, max_duration: 0 }), Codes.INVALID_SESSION_STATE, 'không đổi cấu hình khi đang quay');
   const stop = await ctrl.stopRecording(room.room_id, { client_command_id: uuid() });
   ok(stop.results[0].status === 'saved', 'stop_recording');
   s = await remote.syncDevice(deviceA, { recording_state: 'recording', elapsed_ms: 5000 });
   ok(s.pending_commands.some((c) => c.type === 'stop_record') && s.room_status.session_id === null, 'sync_device nhận lệnh stop_record');
+
+  // Giới hạn thời gian: Controller không bấm Dừng thì server tự kết thúc phiên sau giới hạn (+5 giây chờ).
+  const limited = await ctrl.startRecording(room.room_id, { target: 'all', config: { resolution: '1280x720', fps: 30, max_duration: 1 }, client_command_id: uuid() });
+  ok((await ctrl.syncRoom(room.room_id)).room.config?.max_duration === 1, 'sync_room trả max_duration của phiên đang quay');
+  await sleep(6500);
+  const rsExpired = await ctrl.syncRoom(room.room_id);
+  ok(rsExpired.room.status === 'open' && rsExpired.room.session_id === null, `phiên ${limited.session_id} tự kết thúc khi hết giới hạn`);
+  await expectCode(ctrl.stopRecording(room.room_id, { client_command_id: uuid() }), Codes.INVALID_SESSION_STATE, 'stop_recording sau khi phiên đã tự kết thúc');
+  s = await remote.syncDevice(deviceA, { recording_state: 'idle' });
 
   // ---------- D. Upload ----------
   console.log('D. Tự động upload');
@@ -224,6 +241,7 @@ async function main() {
 
   // ---------- B (tiếp). Loại / rời / đóng phòng ----------
   console.log('B. Loại, rời, đóng phòng');
+  await remote.syncDevice(deviceA, { recording_state: 'saved', upload_state: 'uploaded', upload_percent: 100 });
   const kick = await ctrl.kickMember(room.room_id, joined.member_id, 'test');
   ok(kick.member_id === joined.member_id, 'kick_member');
   s = await remote.syncDevice(deviceA, { recording_state: 'idle' });
@@ -231,6 +249,8 @@ async function main() {
   const rsLeft = await ctrl.syncRoom(room.room_id, rev);
   ok(rsLeft.left.includes(joined.member_id), 'sync_room: máy bị loại nằm trong mảng left');
   const rejoin = await remote.joinRoom({ invite_code: room.invite_code, device_id: deviceA, camera_name: 'Cam Phai', grant_control: true });
+  const afterRejoin = (await ctrl.syncRoom(room.room_id)).members.find((m) => m.member_id === rejoin.member_id);
+  ok(afterRejoin?.upload_state === 'none' && afterRejoin.recording_state === 'idle', 'vào lại phòng: xóa trạng thái "Đã lưu clip / Đã upload" cũ');
   const left = await remote.leaveRoom(room.room_id, deviceA);
   ok(left.device_id === deviceA && rejoin.member_id !== joined.member_id, 'leave_room');
   const closed = await ctrl.closeRoom(room.room_id);

@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
-import { Alert, AppState, Platform, Text } from 'react-native';
-import { NavigationContainer, DefaultTheme, createNavigationContainerRef } from '@react-navigation/native';
+import { Alert, AppState, Platform, View } from 'react-native';
+import { NavigationContainer, DarkTheme, DefaultTheme, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -11,8 +11,8 @@ import { session } from './services/session';
 import { startRuntime } from './services/runtime';
 import { remoteAgent } from './services/remote';
 import { cameraBridge } from './services/recorder';
-import { Loading } from './ui/components';
-import { colors } from './ui/theme';
+import { Icon, Logo, Loading, type IconName } from './ui/components';
+import { colors, font, scheme } from './ui/theme';
 import type { AppStackParams, AuthStackParams, TabParams } from './navigation/types';
 import { LoginScreen } from './screens/auth/LoginScreen';
 import { SignupScreen } from './screens/auth/SignupScreen';
@@ -51,7 +51,7 @@ const blockWhileRecording = {
   tabPress: (e: { preventDefault: () => void }) => {
     if (remoteAgent.getState().recordingState === 'recording' || cameraBridge.getState().recording) {
       e.preventDefault();
-      Alert.alert('Đang quay', 'Máy đang quay video. Vui lòng chờ dừng quay rồi chuyển màn hình.');
+      Alert.alert('Đang quay', 'Dừng quay trước khi chuyển.');
     }
   },
 };
@@ -60,29 +60,66 @@ const AuthStack = createNativeStackNavigator<AuthStackParams>();
 const AppStack = createNativeStackNavigator<AppStackParams>();
 const Tabs = createBottomTabNavigator<TabParams>();
 
-const navTheme = { ...DefaultTheme, colors: { ...DefaultTheme.colors, background: colors.bg, primary: colors.primary } };
+const baseTheme = scheme === 'dark' ? DarkTheme : DefaultTheme;
+const navTheme = {
+  ...baseTheme,
+  colors: {
+    ...baseTheme.colors,
+    background: colors.bg,
+    card: colors.surface,
+    text: colors.text,
+    border: colors.border,
+    primary: colors.accent,
+    notification: colors.rec,
+  },
+};
 
-function TabIcon({ label, focused }: { label: string; focused: boolean }) {
-  return <Text style={{ fontSize: 18, opacity: focused ? 1 : 0.5 }}>{label}</Text>;
+const tabIcon =
+  (name: IconName) =>
+  ({ color }: { color: string }) => <Icon name={name} size={22} color={color} />;
+
+function HeaderLogo() {
+  return (
+    <View style={{ marginLeft: 16 }}>
+      <Logo />
+    </View>
+  );
 }
+
+const headerOptions = {
+  headerTitleAlign: 'center' as const,
+  headerStyle: { backgroundColor: colors.bg },
+  headerTintColor: colors.text,
+  headerTitleStyle: { fontWeight: font.heading, fontSize: 16, color: colors.text },
+  headerShadowVisible: false,
+};
+
+const tabOptions = {
+  ...headerOptions,
+  headerLeft: () => <HeaderLogo />,
+  tabBarActiveTintColor: colors.accent,
+  tabBarInactiveTintColor: colors.muted,
+  tabBarStyle: { backgroundColor: colors.surface, borderTopWidth: 0, elevation: 0 },
+  tabBarLabelStyle: { fontSize: 11, fontWeight: font.medium },
+};
 
 function ControllerTabs() {
   return (
-    <Tabs.Navigator screenOptions={{ tabBarActiveTintColor: colors.primary, headerTitleAlign: 'center' }}>
+    <Tabs.Navigator screenOptions={tabOptions}>
       <Tabs.Screen
         name="Room"
         component={RoomScreen}
-        options={{ title: 'Điều khiển', tabBarIcon: ({ focused }) => <TabIcon label="🎬" focused={focused} /> }}
+        options={{ title: 'Phòng', tabBarIcon: tabIcon('grid') }}
       />
       <Tabs.Screen
         name="Library"
         component={ControllerLibraryScreen}
-        options={{ title: 'Thư viện', tabBarIcon: ({ focused }) => <TabIcon label="🎞️" focused={focused} /> }}
+        options={{ title: 'Thư viện', tabBarIcon: tabIcon('library') }}
       />
       <Tabs.Screen
         name="Settings"
         component={SettingsScreen}
-        options={{ title: 'Cài đặt', tabBarIcon: ({ focused }) => <TabIcon label="⚙️" focused={focused} /> }}
+        options={{ title: 'Cài đặt', tabBarIcon: tabIcon('settings') }}
       />
     </Tabs.Navigator>
   );
@@ -90,23 +127,23 @@ function ControllerTabs() {
 
 function RemoteTabs() {
   return (
-    <Tabs.Navigator screenOptions={{ tabBarActiveTintColor: colors.primary, headerTitleAlign: 'center' }}>
+    <Tabs.Navigator screenOptions={tabOptions}>
       <Tabs.Screen
         name="Camera"
         component={CameraScreen}
-        options={{ title: 'Quay', headerShown: false, tabBarIcon: ({ focused }) => <TabIcon label="📷" focused={focused} /> }}
+        options={{ title: 'Quay', headerShown: false, tabBarIcon: tabIcon('camera') }}
       />
       <Tabs.Screen
         name="Library"
         component={RemoteLibraryScreen}
         listeners={blockWhileRecording}
-        options={{ title: 'Thư viện', tabBarIcon: ({ focused }) => <TabIcon label="🎞️" focused={focused} /> }}
+        options={{ title: 'Thư viện', tabBarIcon: tabIcon('library') }}
       />
       <Tabs.Screen
         name="Settings"
         component={SettingsScreen}
         listeners={blockWhileRecording}
-        options={{ title: 'Cài đặt', tabBarIcon: ({ focused }) => <TabIcon label="⚙️" focused={focused} /> }}
+        options={{ title: 'Cài đặt', tabBarIcon: tabIcon('settings') }}
       />
     </Tabs.Navigator>
   );
@@ -114,7 +151,7 @@ function RemoteTabs() {
 
 function SignedInStack({ role }: { role: 'controller' | 'remote' }) {
   return (
-    <AppStack.Navigator screenOptions={{ headerTitleAlign: 'center', headerBackTitle: 'Quay lại' }}>
+    <AppStack.Navigator screenOptions={{ ...headerOptions, headerBackButtonDisplayMode: 'minimal' as const, contentStyle: { backgroundColor: colors.bg } }}>
       <AppStack.Screen name="Tabs" component={role === 'controller' ? ControllerTabs : RemoteTabs} options={{ headerShown: false }} />
       <AppStack.Screen name="Player" component={PlayerScreen} options={({ route }) => ({ title: route.params.title })} />
       <AppStack.Screen name="ChangePassword" component={ChangePasswordScreen} options={{ title: 'Đổi mật khẩu' }} />
@@ -127,11 +164,11 @@ function SignedInStack({ role }: { role: 'controller' | 'remote' }) {
 
 function AuthNavigator() {
   return (
-    <AuthStack.Navigator screenOptions={{ headerTitleAlign: 'center', headerBackTitle: 'Quay lại' }}>
-      <AuthStack.Screen name="Login" component={LoginScreen} options={{ title: 'Đăng nhập' }} />
-      <AuthStack.Screen name="Signup" component={SignupScreen} options={{ title: 'Đăng ký' }} />
-      <AuthStack.Screen name="Verify" component={VerifyScreen} options={{ title: 'Nhập mã xác thực' }} />
-      <AuthStack.Screen name="Forgot" component={ForgotPasswordScreen} options={{ title: 'Quên mật khẩu' }} />
+    <AuthStack.Navigator screenOptions={{ ...headerOptions, headerBackButtonDisplayMode: 'minimal' as const, contentStyle: { backgroundColor: colors.bg } }}>
+      <AuthStack.Screen name="Login" component={LoginScreen} options={{ title: 'Đăng nhập', headerShown: false }} />
+      <AuthStack.Screen name="Signup" component={SignupScreen} options={{ title: 'Tạo tài khoản' }} />
+      <AuthStack.Screen name="Verify" component={VerifyScreen} options={{ title: 'Nhập mã' }} />
+      <AuthStack.Screen name="Forgot" component={ForgotPasswordScreen} options={{ title: 'Đặt lại mật khẩu' }} />
     </AuthStack.Navigator>
   );
 }
@@ -159,7 +196,7 @@ export default function App() {
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
         <NavigationContainer ref={navigationRef} theme={navTheme}>
-          <StatusBar style="dark" />
+          <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
           <Root />
         </NavigationContainer>
       </QueryClientProvider>

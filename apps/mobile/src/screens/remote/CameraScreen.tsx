@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Linking, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Linking, Modal, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -17,11 +17,12 @@ import { getFreeStorage } from '../../services/clips';
 import { cameraBridge, resolveCameraName } from '../../services/recorder';
 import { remoteAgent } from '../../services/remote';
 import { leaveCurrentRoom, leftByUserRecently } from '../../services/runtime';
+import { usePreviewSender } from '../../services/previewSender';
 import { session } from '../../services/session';
 import { setCameraName } from '../../services/storage';
 import { useAppState } from '../../hooks';
-import { Banner, Button, Checkbox, Field, Muted } from '../../ui/components';
-import { colors, radius, spacing } from '../../ui/theme';
+import { Banner, Button, Checkbox, Field, Icon, PressableScale, RecDot, RotatingIcon } from '../../ui/components';
+import { colors, font, radius, spacing } from '../../ui/theme';
 
 function parseResolution(res: string): { width: number; height: number } {
   const [w, h] = res.split('x').map(Number);
@@ -41,16 +42,17 @@ type PermissionState = ReturnType<typeof useCameraPermission>;
 function PermissionGate({ cam, mic }: { cam: PermissionState; mic: PermissionState }) {
   return (
     <View style={styles.center}>
-      <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', textAlign: 'center' }}>Cần quyền camera và micro để quay video</Text>
+      <Icon name="camera" size={32} color={colors.onMediaMuted} />
+      <Text style={{ color: colors.onMedia, fontSize: 16, fontWeight: font.heading, textAlign: 'center' }}>Cần quyền camera và micro</Text>
       <Button
         title="Cấp quyền"
         onPress={async () => {
           const okCam = await cam.requestPermission();
           await mic.requestPermission();
           if (!okCam) {
-            Alert.alert('Chưa có quyền camera', 'Mở Cài đặt để cấp quyền camera cho ứng dụng.', [
-              { text: 'Để sau', style: 'cancel' },
-              { text: 'Mở Cài đặt', onPress: () => void Linking.openSettings() },
+            Alert.alert('Chưa có quyền camera', undefined, [
+              { text: 'Hủy', style: 'cancel' },
+              { text: 'Mở cài đặt', onPress: () => void Linking.openSettings() },
             ]);
           }
         }}
@@ -62,7 +64,12 @@ function PermissionGate({ cam, mic }: { cam: PermissionState; mic: PermissionSta
 /** Đồng hồ quay tách riêng để không vẽ lại cả màn camera mỗi 500 ms. */
 function RecTimer({ startedAt }: { startedAt: number | null }) {
   const now = useNow(500);
-  return <Text style={styles.pillText}>● REC {formatDuration(startedAt ? now - startedAt : 0)}</Text>;
+  return (
+    <>
+      <RecDot size={7} />
+      <Text style={styles.pillText}>REC {formatDuration(startedAt ? now - startedAt : 0)}</Text>
+    </>
+  );
 }
 
 export function CameraScreen() {
@@ -89,6 +96,7 @@ export function CameraScreen() {
   const [joining, setJoining] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [flipTurns, setFlipTurns] = useState(0);
 
   const recording = agent.recordingState === 'recording' || bridge.recording;
   // Camera chạy khi màn hình đang hiển thị, hoặc khi đang quay (không để mất clip khi đổi tab).
@@ -104,6 +112,9 @@ export function CameraScreen() {
   useEffect(() => {
     if (!isActive) cameraBridge.setReady(false);
   }, [isActive]);
+
+  // Khung hình xem trước ~1 khung/giây cho Controller khi đang ở trong phòng và camera đã sẵn sàng.
+  usePreviewSender(cameraRef, agent.inRoom && bridge.ready && isActive && !!device);
 
   // ----- Dung lượng trống: kiểm tra khi mở màn hình và định kỳ -----
   const refreshStorage = useCallback(() => {
@@ -124,7 +135,7 @@ export function CameraScreen() {
   const prevInRoom = useRef(agent.inRoom);
   useEffect(() => {
     if (prevInRoom.current && !agent.inRoom && !leftByUserRecently()) {
-      Alert.alert('Đã rời phòng', 'Máy đã bị loại khỏi phòng hoặc phòng đã đóng. Quay lại chế độ quay độc lập.');
+      Alert.alert('Đã rời phòng');
     }
     prevInRoom.current = agent.inRoom;
   }, [agent.inRoom]);
@@ -155,15 +166,15 @@ export function CameraScreen() {
       return;
     }
     if (!cameraName.trim()) {
-      setJoinError('Nhập tên máy quay');
+      setJoinError('Nhập tên camera');
       return;
     }
     if (!consent) {
-      setJoinError('Bạn cần cho phép Controller điều khiển quay để vào phòng');
+      setJoinError('Cần cho phép điều khiển');
       return;
     }
     if (!info?.deviceId) {
-      setJoinError('Thiếu mã thiết bị, vui lòng đăng nhập lại');
+      setJoinError('Hãy đăng nhập lại');
       return;
     }
     setJoining(true);
@@ -184,15 +195,15 @@ export function CameraScreen() {
       setConsent(false);
     } catch (e) {
       if (isApiError(e, Codes.INVITE_NOT_FOUND)) {
-        setJoinError('Mã mời không đúng hoặc đã hết hạn. Hãy xin mã mới từ Controller.');
+        setJoinError('Mã mời không hợp lệ');
         setInviteCode('');
       } else if (isApiError(e, Codes.ROOM_FULL)) {
         setJoinError('Phòng đã đầy');
       } else if (isApiError(e, Codes.DEVICE_IN_OTHER_ROOM) && !retried) {
         const ok = await new Promise<boolean>((resolve) =>
-          Alert.alert('Đang ở phòng khác', 'Thiết bị đang ở trong một phòng khác. Rời phòng cũ để vào phòng mới?', [
-            { text: 'Không', style: 'cancel', onPress: () => resolve(false) },
-            { text: 'Rời phòng cũ', onPress: () => resolve(true) },
+          Alert.alert('Rời phòng hiện tại?', undefined, [
+            { text: 'Hủy', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Rời phòng', onPress: () => resolve(true) },
           ]),
         );
         if (ok) {
@@ -214,7 +225,7 @@ export function CameraScreen() {
   }
 
   function confirmLeave() {
-    Alert.alert('Rời phòng', recording ? 'Máy đang quay. Clip sẽ được lưu rồi rời phòng.' : 'Rời phòng và thu hồi quyền điều khiển của Controller?', [
+    Alert.alert('Rời phòng?', recording ? 'Clip đang quay vẫn được lưu.' : undefined, [
       { text: 'Hủy', style: 'cancel' },
       {
         text: 'Rời phòng',
@@ -242,7 +253,7 @@ export function CameraScreen() {
     const free = await getFreeStorage();
     setFreeBytes(free);
     if (free !== null && free < MIN_FREE_STORAGE) {
-      Alert.alert('Không đủ dung lượng', `Bộ nhớ trống chỉ còn ${formatBytes(free)} (cần tối thiểu ${formatBytes(MIN_FREE_STORAGE)}). Hãy giải phóng bộ nhớ trước khi quay.`);
+      Alert.alert('Không đủ bộ nhớ', `Bộ nhớ còn ${formatBytes(free)}`);
       return;
     }
     if (!micPerm.hasPermission) await micPerm.requestPermission();
@@ -257,12 +268,12 @@ export function CameraScreen() {
   const fps = format ? Math.min(bridge.config.fps, format.maxFps) : undefined;
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#000' }}>
+    <View style={{ flex: 1, backgroundColor: colors.media }}>
       {!camPerm.hasPermission ? (
         <PermissionGate cam={camPerm} mic={micPerm} />
       ) : !device ? (
         <View style={styles.center}>
-          <Text style={{ color: '#fff' }}>Không tìm thấy camera {bridge.facing === 'front' ? 'trước' : 'sau'}</Text>
+          <Text style={{ color: colors.onMedia }}>Không tìm thấy camera</Text>
         </View>
       ) : (
         <Camera
@@ -292,16 +303,25 @@ export function CameraScreen() {
       <View style={[styles.top, { paddingTop: insets.top + spacing.sm }]}>
         {agent.inRoom ? (
           <View style={styles.remoteBanner}>
-            <Text style={styles.remoteBannerText}>● Đang được điều khiển từ xa</Text>
-            <Text style={{ color: '#fecaca', fontSize: 12 }}>Phòng: {agent.roomName || agent.roomId}</Text>
+            <Icon name="lock" size={16} color={colors.onMedia} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.remoteBannerText}>Đang được điều khiển từ xa</Text>
+              <Text style={styles.remoteBannerSub} numberOfLines={1}>
+                {agent.roomName || agent.roomId}
+              </Text>
+            </View>
+            <PressableScale accessibilityRole="button" onPress={confirmLeave} disabled={leaving} style={[styles.leaveBtn, leaving && { opacity: 0.5 }]}>
+              <Text style={styles.leaveText}>Rời phòng</Text>
+            </PressableScale>
           </View>
         ) : null}
         <View style={styles.statusRow}>
-          <View style={[styles.pill, { backgroundColor: agent.online ? 'rgba(22,163,74,0.8)' : 'rgba(100,116,139,0.8)' }]}>
-            <Text style={styles.pillText}>{agent.online ? 'Đã kết nối server' : 'Mất kết nối server'}</Text>
+          <View style={styles.pill}>
+            <View style={[styles.connDot, { backgroundColor: agent.online ? colors.success : colors.muted }]} />
+            <Text style={styles.pillText}>{agent.online ? 'Đã kết nối' : 'Mất kết nối'}</Text>
           </View>
           {recording ? (
-            <View style={[styles.pill, { backgroundColor: 'rgba(239,68,68,0.9)' }]}>
+            <View style={styles.pill}>
               <RecTimer startedAt={agent.recordingStartedAt} />
             </View>
           ) : null}
@@ -312,58 +332,75 @@ export function CameraScreen() {
           </View>
         </View>
         {lowStorage ? (
-          <Banner kind="danger">{`Bộ nhớ trống thấp (${formatBytes(freeBytes)}). Cần tối thiểu 500 MB để quay.`}</Banner>
+          <Banner kind="danger">{`Bộ nhớ còn ${formatBytes(freeBytes)}`}</Banner>
         ) : null}
-        {bridge.pendingFlip ? <Banner kind="info">Controller yêu cầu lật camera — sẽ lật sau khi dừng quay</Banner> : null}
-        {cameraError ? <Banner kind="warning">{`Lỗi camera: ${cameraError}`}</Banner> : null}
+        {bridge.pendingFlip ? <Banner kind="info">Lật sau khi dừng</Banner> : null}
+        {cameraError ? <Banner kind="warning">Lỗi camera</Banner> : null}
         {bridge.lastError && !recording ? <Banner kind="warning">{bridge.lastError}</Banner> : null}
-        {agent.recordingState === 'failed' && agent.errorCode ? <Banner kind="danger">{`Quay lỗi: ${agent.errorCode}`}</Banner> : null}
-        {scanning ? <Banner kind="info">Đưa mã QR trên màn hình Controller vào khung camera…</Banner> : null}
+        {agent.recordingState === 'failed' && agent.errorCode ? <Banner kind="danger">Lỗi quay</Banner> : null}
       </View>
 
       {/* ----- Thanh dưới ----- */}
       <View style={[styles.bottom, { paddingBottom: spacing.lg }]}>
         <View style={styles.controls}>
-          <Pressable
+          <PressableScale
+            accessibilityRole="button"
             accessibilityLabel="Lật camera"
-            onPress={() => cameraBridge.toggleFacingLocal()}
+            onPress={() => {
+              setFlipTurns((t) => t + 1);
+              cameraBridge.toggleFacingLocal();
+            }}
             disabled={recording}
             style={[styles.roundBtn, recording && { opacity: 0.4 }]}
           >
-            <Text style={{ fontSize: 22 }}>🔄</Text>
-          </Pressable>
+            <RotatingIcon name="flip" turns={flipTurns} size={24} color={colors.onMedia} />
+          </PressableScale>
 
-          <Pressable
-            accessibilityLabel={recording ? 'Dừng quay' : 'Quay'}
+          <PressableScale
+            accessibilityRole="button"
+            accessibilityLabel={recording ? 'Dừng' : 'Quay'}
             onPress={() => void toggleStandaloneRecording()}
             disabled={agent.inRoom || !camPerm.hasPermission || (lowStorage && !recording)}
-            style={[styles.recordOuter, (agent.inRoom || (lowStorage && !recording)) && { opacity: 0.4 }]}
+            style={[styles.recordOuter, (agent.inRoom || (lowStorage && !recording)) && { opacity: 0.45 }]}
           >
             <View style={recording ? styles.recordInnerStop : styles.recordInner} />
-            {agent.inRoom ? <Text style={styles.lock}>🔒</Text> : null}
-          </Pressable>
+            {agent.inRoom ? (
+              <View style={styles.lock}>
+                <Icon name="lock" size={22} color={colors.onMedia} />
+              </View>
+            ) : null}
+          </PressableScale>
 
           {agent.inRoom ? (
-            <Pressable onPress={confirmLeave} style={styles.roundBtn} disabled={leaving}>
-              <Text style={styles.smallBtnText}>{leaving ? '…' : 'Rời\nphòng'}</Text>
-            </Pressable>
+            <View style={styles.roundSpacer} />
           ) : (
-            <Pressable onPress={() => void openJoin()} style={styles.roundBtn} disabled={recording}>
-              <Text style={[styles.smallBtnText, recording && { opacity: 0.4 }]}>Vào{'\n'}phòng</Text>
-            </Pressable>
+            <PressableScale
+              accessibilityRole="button"
+              onPress={() => void openJoin()}
+              style={[styles.roundBtn, recording && { opacity: 0.4 }]}
+              disabled={recording}
+            >
+              <Icon name="qr" size={20} color={colors.onMedia} />
+              <Text style={styles.smallBtnText}>Tham gia</Text>
+            </PressableScale>
           )}
         </View>
-        {scanning ? <Button title="Hủy quét" variant="secondary" small onPress={() => setScanning(false)} /> : null}
-        {agent.inRoom ? <Muted style={{ color: '#e2e8f0', textAlign: 'center' }}>Nút quay bị khóa khi máy đang ở trong phòng</Muted> : null}
+        {scanning ? <Button title="Hủy" variant="secondary" small onPress={() => setScanning(false)} style={{ alignSelf: 'center' }} /> : null}
       </View>
 
       {/* ----- Vào phòng ----- */}
-      <Modal visible={joinOpen} transparent animationType="slide" onRequestClose={() => setJoinOpen(false)}>
-        <View style={styles.sheetBackdrop}>
-          <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.lg }]}>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>Tham gia phòng</Text>
+      <Modal visible={joinOpen} transparent animationType="slide" onRequestClose={() => setJoinOpen(false)} statusBarTranslucent navigationBarTranslucent>
+        {/* Bàn phím mở: tấm nhập liệu được đẩy lên trên bàn phím, nội dung dài thì cuộn được. */}
+        <KeyboardAvoidingView style={styles.sheetBackdrop} behavior="padding">
+          <ScrollView
+            style={styles.sheetScroll}
+            contentContainerStyle={[styles.sheet, { paddingBottom: insets.bottom + spacing.lg }]}
+            keyboardShouldPersistTaps="handled"
+            bounces={false}
+          >
+            <Text style={{ fontSize: 17, fontWeight: font.heading, color: colors.text }}>Tham gia phòng</Text>
             <Field
-              label="Mã mời (6 ký tự)"
+              label="Mã mời"
               value={inviteCode}
               onChangeText={(v) => setInviteCode(v.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
               autoCapitalize="characters"
@@ -371,24 +408,25 @@ export function CameraScreen() {
               placeholder="8F2A1C"
             />
             <Button
-              title="Quét mã QR"
-              variant="secondary"
+              title="Quét QR"
+              variant="tonal"
+              icon="qr"
               onPress={() => {
                 setJoinOpen(false);
                 setScanning(true);
               }}
             />
-            <Field label="Tên máy quay" value={cameraName} onChangeText={setName} maxLength={40} placeholder="Cam Trái" />
+            <Field label="Tên camera" value={cameraName} onChangeText={setName} maxLength={40} placeholder="Cam trái" />
             <Checkbox
               checked={consent}
               onChange={setConsent}
-              label="Tôi cho phép Controller điều khiển quay (bắt đầu/dừng quay, lật camera) trên máy này"
+              label="Cho phép điều khiển quay"
             />
-            {joinError ? <Text style={{ color: colors.danger }}>{joinError}</Text> : null}
+            {joinError ? <Text style={{ color: colors.danger, fontSize: 13 }}>{joinError}</Text> : null}
             <Button title="Tham gia" onPress={() => void doJoin()} loading={joining} disabled={!consent} />
             <Button title="Hủy" variant="ghost" onPress={() => setJoinOpen(false)} />
-          </View>
-        </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -397,40 +435,72 @@ export function CameraScreen() {
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl, gap: spacing.lg },
   top: { position: 'absolute', top: 0, left: 0, right: 0, paddingHorizontal: spacing.md, gap: spacing.sm },
-  remoteBanner: { backgroundColor: colors.danger, borderRadius: radius.md, padding: spacing.md, alignItems: 'center' },
-  remoteBannerText: { color: '#fff', fontWeight: '800', fontSize: 16 },
+  remoteBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    backgroundColor: colors.overlay,
+    borderRadius: radius.xl,
+    paddingLeft: spacing.md,
+    paddingRight: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  leaveBtn: {
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+  },
+  leaveText: { color: colors.onMedia, fontSize: 13, fontWeight: font.medium },
+  remoteBannerText: { color: colors.onMedia, fontWeight: font.heading, fontSize: 14 },
+  remoteBannerSub: { color: colors.onMediaMuted, fontSize: 12 },
   statusRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  pill: { backgroundColor: 'rgba(15,23,42,0.7)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
-  pillText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.overlay,
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  connDot: { width: 6, height: 6, borderRadius: 3 },
+  pillText: { color: colors.onMedia, fontSize: 12, fontWeight: font.medium, fontVariant: font.tabular },
   bottom: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: spacing.lg, gap: spacing.sm },
   controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   roundBtn: {
     width: 64,
     height: 64,
-    borderRadius: 32,
-    backgroundColor: 'rgba(15,23,42,0.7)',
+    borderRadius: radius.pill,
+    backgroundColor: colors.overlay,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 4,
   },
-  smallBtnText: { color: '#fff', fontSize: 12, fontWeight: '700', textAlign: 'center' },
+  roundSpacer: { width: 64, height: 64 },
+  smallBtnText: { color: colors.onMedia, fontSize: 11, fontWeight: font.medium, textAlign: 'center' },
   recordOuter: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    borderWidth: 5,
-    borderColor: '#fff',
+    width: 78,
+    height: 78,
+    borderRadius: 39,
+    borderWidth: 4,
+    borderColor: colors.onMedia,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  recordInner: { width: 58, height: 58, borderRadius: 29, backgroundColor: colors.recording },
-  recordInnerStop: { width: 32, height: 32, borderRadius: 6, backgroundColor: colors.recording },
-  lock: { position: 'absolute', fontSize: 22 },
-  sheetBackdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.5)', justifyContent: 'flex-end' },
+  recordInner: { width: 60, height: 60, borderRadius: 30, backgroundColor: colors.rec },
+  recordInnerStop: { width: 30, height: 30, borderRadius: 6, backgroundColor: colors.rec },
+  lock: { position: 'absolute' },
+  sheetBackdrop: { flex: 1, backgroundColor: colors.backdrop, justifyContent: 'flex-end' },
+  sheetScroll: {
+    flexGrow: 0,
+    flexShrink: 1,
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radius.xxl,
+    borderTopRightRadius: radius.xxl,
+  },
   sheet: {
-    backgroundColor: colors.card,
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
-    padding: spacing.lg,
+    padding: spacing.xl,
     gap: spacing.md,
   },
 });

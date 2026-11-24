@@ -27,7 +27,7 @@ export function SettingsPage() {
       await api.changePassword(parsed.data);
       // Không lưu mật khẩu mới vào thiết bị; các máy khác bị đăng xuất ở lần gọi API kế tiếp.
       setPw({ old_password: '', new_password: '' });
-      setMsg({ kind: 'success', text: 'Đã đổi mật khẩu. Các thiết bị khác sẽ bị đăng xuất.' });
+      setMsg({ kind: 'success', text: 'Đã đổi mật khẩu' });
     } catch (err) {
       if (err instanceof ApiError && err.field === 'old_password') setErrors({ old_password: 'Mật khẩu cũ không đúng' });
       else setMsg({ kind: 'error', text: errorText(err) });
@@ -43,7 +43,7 @@ export function SettingsPage() {
       const roomId = runtime?.agent.getState().roomId;
       if (roomId) await api.leaveRoom(roomId, session.deviceId).catch(() => undefined);
       await api.deleteAccount(deletePw);
-      await signOut({ callApi: false, message: 'Tài khoản và toàn bộ video đã upload đã bị xóa vĩnh viễn.' });
+      await signOut({ callApi: false, message: 'Đã xóa tài khoản' });
     } catch (err) {
       setDeleteError(err instanceof ApiError && err.field === 'password' ? 'Sai mật khẩu' : errorText(err));
     } finally {
@@ -55,16 +55,13 @@ export function SettingsPage() {
     <div className="page narrow">
       <h1>Cài đặt</h1>
       <section className="card">
-        <h2>Tài khoản</h2>
-        <p>
-          <b>
+        <div className="section-head" style={{ marginBottom: 4 }}>
+          <h2>
             {session.user.last_name} {session.user.first_name}
-          </b>{' '}
-          · <span className={`role role-${session.role}`}>{isController ? 'Controller' : 'Remote'}</span>
-        </p>
-        <p className="muted small">
-          {session.user.email ?? ''} {session.user.phone ? `· ${session.user.phone}` : ''} · Thiết bị {session.deviceId}
-        </p>
+          </h2>
+          <span className={`role role-${session.role}`}>{isController ? 'Controller' : 'Remote'}</span>
+        </div>
+        <div className="muted small">{session.user.email ?? session.user.phone}</div>
       </section>
 
       <section className="card">
@@ -72,9 +69,9 @@ export function SettingsPage() {
         {msg ? <Banner kind={msg.kind}>{msg.text}</Banner> : null}
         <form className="form" onSubmit={changePassword}>
           <Field label="Mật khẩu hiện tại" name="old_password" type="password" value={pw.old_password} onChange={(v) => setPw({ ...pw, old_password: v })} error={errors.old_password} autoComplete="current-password" />
-          <Field label="Mật khẩu mới (6–20 ký tự)" name="new_password" type="password" value={pw.new_password} onChange={(v) => setPw({ ...pw, new_password: v })} error={errors.new_password} autoComplete="new-password" maxLength={20} />
+          <Field label="Mật khẩu mới" placeholder="6–20 ký tự" name="new_password" type="password" value={pw.new_password} onChange={(v) => setPw({ ...pw, new_password: v })} error={errors.new_password} autoComplete="new-password" maxLength={20} />
           <button className="btn btn-primary" disabled={busy}>
-            Xác nhận đổi mật khẩu
+            Lưu
           </button>
         </form>
       </section>
@@ -89,7 +86,7 @@ export function SettingsPage() {
       {!isController ? (
         <section className="card danger-zone">
           <h2>Xóa tài khoản</h2>
-          <p className="muted">Xóa vĩnh viễn tài khoản cùng toàn bộ video đã upload lên server. Không thể hoàn tác.</p>
+          <p className="muted">Xóa vĩnh viễn tài khoản và video.</p>
           <button className="btn btn-danger" onClick={() => setDeleteStep(1)}>
             Xóa tài khoản
           </button>
@@ -98,7 +95,7 @@ export function SettingsPage() {
 
       {deleteStep === 1 ? (
         <Modal
-          title="Xóa tài khoản (bước 1/2)"
+          title="Nhập mật khẩu"
           onClose={() => setDeleteStep(0)}
           footer={
             <>
@@ -111,13 +108,12 @@ export function SettingsPage() {
             </>
           }
         >
-          <p>Nhập lại mật khẩu để xác nhận.</p>
           <Field label="Mật khẩu" name="delete_password" type="password" value={deletePw} onChange={setDeletePw} autoComplete="current-password" />
         </Modal>
       ) : null}
       {deleteStep === 2 ? (
         <Modal
-          title="Xóa tài khoản (bước 2/2)"
+          title="Xóa vĩnh viễn?"
           onClose={() => setDeleteStep(0)}
           footer={
             <>
@@ -125,15 +121,13 @@ export function SettingsPage() {
                 Hủy
               </button>
               <button className="btn btn-danger" disabled={busy} onClick={deleteAccount}>
-                Xóa vĩnh viễn
+                Xóa
               </button>
             </>
           }
         >
           {deleteError ? <Banner kind="error">{deleteError}</Banner> : null}
-          <p>
-            Bạn chắc chắn muốn xóa vĩnh viễn tài khoản <b>{session.user.email ?? session.user.phone}</b> và toàn bộ video đã upload?
-          </p>
+          <p className="muted">Không thể hoàn tác.</p>
         </Modal>
       ) : null}
     </div>

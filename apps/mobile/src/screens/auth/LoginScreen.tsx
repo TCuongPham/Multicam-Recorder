@@ -6,7 +6,7 @@ import { api, errorMessage, isApiError } from '../../services/api';
 import { session } from '../../services/session';
 import { getServerUrl, normalizeServerUrl, setServerUrl } from '../../services/storage';
 import { deviceFields } from '../../hooks';
-import { Banner, Button, Card, Field, Muted, Row, Screen, Title } from '../../ui/components';
+import { Banner, Button, Card, Field, Logo, Row, Screen, Title } from '../../ui/components';
 import { colors } from '../../ui/theme';
 import type { AuthScreenProps } from '../../navigation/types';
 
@@ -37,9 +37,9 @@ export function LoginScreen({ navigation }: AuthScreenProps<'Login'>) {
       const res = await fetch(`${url}/health`, { signal: ctrl.signal });
       clearTimeout(t);
       const json = (await res.json()) as { code?: string };
-      setServerStatus(json.code === Codes.OK ? { ok: true, text: 'Kết nối server thành công' } : { ok: false, text: `Server trả mã ${json.code}` });
+      setServerStatus(json.code === Codes.OK ? { ok: true, text: 'Đã kết nối' } : { ok: false, text: `Lỗi ${json.code}` });
     } catch {
-      setServerStatus({ ok: false, text: 'Không kết nối được server. Kiểm tra địa chỉ IP và mạng LAN.' });
+      setServerStatus({ ok: false, text: 'Không kết nối được' });
     } finally {
       setChecking(false);
     }
@@ -47,7 +47,7 @@ export function LoginScreen({ navigation }: AuthScreenProps<'Login'>) {
 
   async function onLogin() {
     const next: typeof errors = {};
-    if (!account.trim()) next.account = 'Nhập email, số điện thoại hoặc tên đăng nhập';
+    if (!account.trim()) next.account = 'Nhập email hoặc số điện thoại';
     if (!password) next.password = 'Nhập mật khẩu';
     setErrors(next);
     if (Object.keys(next).length) return;
@@ -86,18 +86,35 @@ export function LoginScreen({ navigation }: AuthScreenProps<'Login'>) {
   }
 
   return (
-    <Screen>
-      <View style={{ alignItems: 'center', marginVertical: 12 }}>
-        <Text style={{ fontSize: 40 }}>🎥</Text>
-        <Title>Multi-Cam Recorder</Title>
-        <Muted>Một Controller điều khiển nhiều máy quay</Muted>
+    <Screen edges={['top', 'bottom', 'left', 'right']}>
+      <View style={{ alignItems: 'center', marginTop: 32, marginBottom: 8, gap: 16 }}>
+        <Logo size={40} />
+        <Title>Đăng nhập</Title>
       </View>
 
       {notice ? <Banner kind="success">{notice}</Banner> : null}
 
       <Card>
         <Field
-          label="Địa chỉ server (máy Controller)"
+          label="Email hoặc số điện thoại"
+          value={account}
+          onChangeText={setAccount}
+          autoCapitalize="none"
+          keyboardType="email-address"
+          error={errors.account}
+        />
+        <Field label="Mật khẩu" value={password} onChangeText={setPassword} secureTextEntry error={errors.password} />
+        {errors.form ? <Text style={{ color: colors.danger }}>{errors.form}</Text> : null}
+        <Button title="Đăng nhập" onPress={onLogin} loading={loading} style={{ marginTop: 4 }} />
+        <Row style={{ justifyContent: 'space-between' }}>
+          <Button title="Quên mật khẩu?" variant="ghost" small onPress={() => navigation.navigate('Forgot')} style={{ paddingHorizontal: 8 }} />
+          <Button title="Tạo tài khoản" variant="ghost" small onPress={() => navigation.navigate('Signup')} style={{ paddingHorizontal: 8 }} />
+        </Row>
+      </Card>
+
+      <Card>
+        <Field
+          label="Máy chủ"
           value={server}
           onChangeText={(v) => {
             setServer(v);
@@ -107,35 +124,14 @@ export function LoginScreen({ navigation }: AuthScreenProps<'Login'>) {
           autoCapitalize="none"
           keyboardType="url"
           placeholder="http://192.168.1.2:3000"
-          hint="Server chạy trên laptop Controller, cùng mạng Wi-Fi với điện thoại"
         />
         <Row>
-          <Button title="Kiểm tra kết nối" variant="secondary" small onPress={checkServer} loading={checking} />
+          <Button title="Kiểm tra" variant="tonal" small onPress={checkServer} loading={checking} />
           {serverStatus ? (
-            <Text style={{ flex: 1, color: serverStatus.ok ? colors.success : colors.danger, fontSize: 12 }}>{serverStatus.text}</Text>
+            <Text style={{ flex: 1, color: serverStatus.ok ? colors.success : colors.danger, fontSize: 13 }}>{serverStatus.text}</Text>
           ) : null}
         </Row>
       </Card>
-
-      <Card>
-        <Field
-          label="Email / Số điện thoại"
-          value={account}
-          onChangeText={setAccount}
-          autoCapitalize="none"
-          keyboardType="email-address"
-          placeholder="email@vidu.com hoặc 0912345678"
-          error={errors.account}
-        />
-        <Field label="Mật khẩu" value={password} onChangeText={setPassword} secureTextEntry placeholder="••••••" error={errors.password} />
-        {errors.form ? <Text style={{ color: colors.danger }}>{errors.form}</Text> : null}
-        <Button title="Đăng nhập" onPress={onLogin} loading={loading} />
-        <Row style={{ justifyContent: 'space-between' }}>
-          <Button title="Quên mật khẩu?" variant="ghost" small onPress={() => navigation.navigate('Forgot')} />
-          <Button title="Tạo tài khoản" variant="ghost" small onPress={() => navigation.navigate('Signup')} />
-        </Row>
-      </Card>
-      <Muted style={{ textAlign: 'center' }}>Tài khoản đăng ký mới luôn là máy quay (Remote).</Muted>
     </Screen>
   );
 }

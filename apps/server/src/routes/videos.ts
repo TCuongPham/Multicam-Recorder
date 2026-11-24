@@ -83,6 +83,9 @@ function videoItem(req: Request, v: Video) {
     session_id: v.sessionId,
     local_video_uid: v.localVideoUid,
     downloaded_by_controller: v.downloadedByController ? 1 : 0,
+    // Mở rộng: metadata hiển thị ngay trên thẻ video của Thư viện.
+    resolution: v.resolution,
+    fps: v.fps,
   };
 }
 

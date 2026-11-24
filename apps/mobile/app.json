@@ -4,11 +4,11 @@
     "slug": "multicam-recorder",
     "version": "0.1.0",
     "orientation": "default",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "scheme": "multicam",
     "platforms": ["ios", "android"],
     "newArchEnabled": true,
-    "backgroundColor": "#0f172a",
+    "backgroundColor": "#0E0F12",
     "ios": {
       "bundleIdentifier": "vn.multicam.recorder",
       "supportsTablet": true,

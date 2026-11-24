@@ -81,6 +81,11 @@ export class UploadManager {
     return { upload_state: 'none', upload_percent: 0 };
   };
 
+  /** Quên kết quả của clip trước (phiên mới bắt đầu); clip đang upload thì vẫn báo "uploading". */
+  resetResult() {
+    if (!this.state.active) this.set({ lastResult: null, error: this.state.blocked ? this.state.error : null });
+  }
+
   /** Gọi khi có clip mới, khi mở lại ứng dụng hoặc khi có mạng trở lại. */
   kick(options: { force?: boolean } = {}) {
     if (options.force) {

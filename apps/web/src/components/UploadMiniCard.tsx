@@ -6,26 +6,26 @@ import { ProgressBar } from './ui';
 export function UploadMiniCard({ uploads }: { uploads: UploadManager }) {
   const s = useStore(uploads);
   if (!s.active && !s.error && !s.pending) return null;
-  const phase = s.active?.phase === 'hashing' ? 'Đang tính mã băm' : s.active?.phase === 'completing' ? 'Đang hoàn tất' : 'Đang upload';
+  const phase = s.active?.phase === 'hashing' ? 'Đang chuẩn bị' : s.active?.phase === 'completing' ? 'Đang hoàn tất' : 'Đang tải lên';
   return (
     <div className="card upload-mini">
       {s.active ? (
         <>
           <div className="upload-mini-head">
             <strong>{phase}</strong>
-            <span className="muted small">{Math.round(s.active.percent)}% · còn {Math.max(0, s.pending - 1)} clip chờ</span>
+            <span className="muted small tabular">{Math.round(s.active.percent)}%{s.pending > 1 ? ` · +${s.pending - 1} chờ` : ''}</span>
           </div>
           <ProgressBar percent={s.active.percent} />
         </>
       ) : s.error ? (
         <div className="upload-mini-head">
-          <span className="error-text">{s.blocked ? 'Đã hết dung lượng lưu trữ — Controller cần xóa bớt clip cũ' : `Upload tạm dừng: ${s.error}`}</span>
+          <span className="error-text">{s.blocked ? 'Hết dung lượng lưu trữ' : 'Tải lên tạm dừng'}</span>
           <button className="btn btn-sm" onClick={() => uploads.kick({ force: true })}>
             Thử lại
           </button>
         </div>
       ) : (
-        <span className="muted small">{s.pending} clip chờ upload</span>
+        <span className="muted small">{s.pending} clip chờ tải lên</span>
       )}
     </div>
   );

@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Codes, formatBytes, formatDateTime, formatDuration } from '@multicam/shared';
 import { api, errorMessage, isApiError } from '../../services/api';
 import { Banner, Loading, Muted } from '../../ui/components';
-import { colors } from '../../ui/theme';
+import { colors, font } from '../../ui/theme';
 import type { AppScreenProps } from '../../navigation/types';
 
 function Player({ uri }: { uri: string }) {
@@ -43,7 +43,7 @@ export function PlayerScreen({ route, navigation }: AppScreenProps<'Player'>) {
   if (detail.isLoading) return <Loading />;
   if (detail.error || !detail.data) {
     return (
-      <View style={{ padding: 16, gap: 12 }}>
+      <View style={{ padding: 16, gap: 12, flex: 1, backgroundColor: colors.bg }}>
         <Banner kind="danger">{errorMessage(detail.error)}</Banner>
         <Text style={{ color: colors.primary }} onPress={() => navigation.goBack()}>
           Quay lại
@@ -56,19 +56,20 @@ export function PlayerScreen({ route, navigation }: AppScreenProps<'Player'>) {
     <View style={styles.container}>
       <Player uri={v.url} />
       <View style={{ padding: 16, gap: 4 }}>
-        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{v.camera_name}</Text>
+        <Text style={{ color: colors.onMedia, fontWeight: font.heading, fontSize: 16 }}>{v.camera_name}</Text>
         <Muted style={styles.meta}>
           {formatDuration(v.duration_ms)} · {formatBytes(v.size)} · {v.resolution} · {v.fps} fps · {v.codec}
         </Muted>
-        <Muted style={styles.meta}>Quay lúc {formatDateTime(v.recorded_at || v.created_at)}</Muted>
-        <Muted style={styles.meta}>Phiên: {v.session_id ?? 'Quay độc lập'} · Lệch đồng hồ: {v.clock_offset_ms} ms</Muted>
+        <Muted style={styles.meta}>
+          {formatDateTime(v.recorded_at || v.created_at)} · {v.session_id ? `Phiên ${v.session_id}` : 'Quay lẻ'}
+        </Muted>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
-  video: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' },
-  meta: { color: '#cbd5e1' },
+  container: { flex: 1, backgroundColor: colors.media },
+  video: { width: '100%', aspectRatio: 16 / 9, backgroundColor: colors.media },
+  meta: { color: colors.onMediaMuted, fontVariant: font.tabular },
 });

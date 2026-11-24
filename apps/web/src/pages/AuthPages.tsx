@@ -9,6 +9,7 @@ import {
   signupSchema,
   splitAccount,
 } from '@multicam/shared';
+import { Logo } from '../components/icons';
 import { Banner, Field, errorText, useCountdown } from '../components/ui';
 import { api, deviceInfo } from '../lib/platform';
 import { useSession } from '../lib/session';
@@ -18,7 +19,7 @@ function AuthShell({ title, subtitle, children }: { title: string; subtitle?: st
     <div className="auth-shell">
       <div className="auth-card">
         <div className="brand">
-          <span className="brand-dot" />
+          <Logo />
           Multi-Cam Recorder
         </div>
         <h1>{title}</h1>
@@ -43,7 +44,7 @@ export function LoginPage() {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     const errs: Record<string, string> = {};
-    if (!account.trim()) errs.account = 'Nhập email, số điện thoại hoặc tên đăng nhập';
+    if (!account.trim()) errs.account = 'Nhập email hoặc số điện thoại';
     if (!password) errs.password = 'Nhập mật khẩu';
     setErrors(errs);
     if (Object.keys(errs).length) return;
@@ -68,12 +69,12 @@ export function LoginPage() {
   };
 
   return (
-    <AuthShell title="Đăng nhập" subtitle="Tài khoản Controller dùng để điều khiển; mọi tài khoản đăng ký là máy Remote.">
+    <AuthShell title="Đăng nhập">
       {location.state?.message ? <Banner kind="success">{location.state.message}</Banner> : null}
       {notice ? <Banner kind="info">{notice}</Banner> : null}
       {error ? <Banner kind="error">{error}</Banner> : null}
       <form onSubmit={submit} className="form">
-        <Field label="Email / Số điện thoại" name="account" value={account} onChange={setAccount} error={errors.account} autoComplete="username" />
+        <Field label="Email hoặc số điện thoại" name="account" value={account} onChange={setAccount} error={errors.account} autoComplete="username" />
         <Field label="Mật khẩu" name="password" type="password" value={password} onChange={setPassword} error={errors.password} autoComplete="current-password" />
         <button className="btn btn-primary btn-block" disabled={busy}>
           {busy ? 'Đang đăng nhập…' : 'Đăng nhập'}
@@ -111,7 +112,7 @@ export function SignupPage() {
       navigate('/verify', { state: { email: parsed.data.email, autoSend: true } });
     } catch (err) {
       if (err instanceof ApiError && err.field) {
-        setErrors({ [err.field]: err.code === Codes.USER_EXISTED ? `${err.field === 'email' ? 'Email' : 'Số điện thoại'} đã được đăng ký` : 'Giá trị không hợp lệ' });
+        setErrors({ [err.field]: err.code === Codes.USER_EXISTED ? `${err.field === 'email' ? 'Email' : 'Số điện thoại'} đã được đăng ký` : 'Không hợp lệ' });
       } else setError(errorText(err));
     } finally {
       setBusy(false);
@@ -119,7 +120,7 @@ export function SignupPage() {
   };
 
   return (
-    <AuthShell title="Tạo tài khoản" subtitle="Tài khoản tạo ở đây là tài khoản Remote (máy quay).">
+    <AuthShell title="Tạo tài khoản">
       {error ? <Banner kind="error">{error}</Banner> : null}
       <form onSubmit={submit} className="form">
         <div className="row-2">
@@ -128,7 +129,7 @@ export function SignupPage() {
         </div>
         <Field label="Email" name="email" type="email" value={form.email} onChange={set('email')} error={errors.email} autoComplete="email" />
         <Field label="Số điện thoại" name="phone" inputMode="tel" value={form.phone} onChange={set('phone')} error={errors.phone} placeholder="0912345678" autoComplete="tel" maxLength={10} />
-        <Field label="Mật khẩu (6–20 ký tự, không ký tự đặc biệt)" name="password" type="password" value={form.password} onChange={set('password')} error={errors.password} autoComplete="new-password" maxLength={20} />
+        <Field label="Mật khẩu" placeholder="6–20 ký tự" name="password" type="password" value={form.password} onChange={set('password')} error={errors.password} autoComplete="new-password" maxLength={20} />
         <button className="btn btn-primary btn-block" disabled={busy}>
           {busy ? 'Đang tạo…' : 'Tạo tài khoản'}
         </button>
@@ -157,7 +158,7 @@ export function VerifyPage() {
     try {
       const res = await api.getVerifyCode({ ...target, purpose: 'signup' });
       startCountdown(VERIFY_RESEND_SECONDS);
-      setHint(`Mã đã gửi tới ${res.masked_target} (môi trường thử nghiệm: ${res.code_verify})`);
+      setHint(`Mã thử nghiệm: ${res.code_verify}`);
     } catch (err) {
       if (err instanceof ApiError && err.code === Codes.LIMITED_ACCESS) {
         startCountdown(Number((err.data as { retry_after?: number })?.retry_after) || VERIFY_RESEND_SECONDS);
@@ -178,7 +179,7 @@ export function VerifyPage() {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!/^\d{6}$/.test(code)) {
-      setError('Mã xác thực gồm 6 số');
+      setError('Mã gồm 6 số');
       return;
     }
     setBusy(true);
@@ -196,16 +197,16 @@ export function VerifyPage() {
   };
 
   return (
-    <AuthShell title="Nhập mã xác thực" subtitle={`Mã 6 số đã gửi về ${target.email ?? target.phone ?? ''}`}>
+    <AuthShell title="Nhập mã" subtitle={`Đã gửi mã tới ${target.email ?? target.phone ?? ''}`}>
       {hint ? <Banner kind="info">{hint}</Banner> : null}
       {error ? <Banner kind="error">{error}</Banner> : null}
       <form onSubmit={submit} className="form">
-        <Field label="Mã xác thực" name="code" inputMode="numeric" value={code} onChange={(v) => setCode(v.replace(/\D/g, ''))} maxLength={6} autoComplete="one-time-code" />
+        <Field label="Mã 6 số" name="code" inputMode="numeric" value={code} onChange={(v) => setCode(v.replace(/\D/g, ''))} maxLength={6} autoComplete="one-time-code" />
         <button className="btn btn-primary btn-block" disabled={busy}>
           Xác nhận
         </button>
         <button type="button" className="btn btn-block" disabled={left > 0} onClick={send}>
-          {left > 0 ? `Gửi lại mã (${left}s)` : 'Gửi lại mã'}
+          {left > 0 ? `Gửi lại sau ${left}s` : 'Gửi lại'}
         </button>
       </form>
     </AuthShell>
@@ -237,7 +238,7 @@ export function ForgotPage() {
     try {
       const res = await api.getVerifyCode({ ...splitAccount(account), purpose: 'forgot_password' });
       startCountdown(VERIFY_RESEND_SECONDS);
-      setHint(`Mã đã gửi tới ${res.masked_target} (môi trường thử nghiệm: ${res.code_verify})`);
+      setHint(`Mã thử nghiệm: ${res.code_verify}`);
       setStep(2);
     } catch (err) {
       if (err instanceof ApiError && err.code === Codes.LIMITED_ACCESS) {
@@ -262,39 +263,39 @@ export function ForgotPage() {
     setBusy(true);
     try {
       await api.forgotPassword(parsed.data);
-      navigate('/login', { replace: true, state: { message: 'Đặt lại mật khẩu thành công, hãy đăng nhập lại' } });
+      navigate('/login', { replace: true, state: { message: 'Đã đặt lại mật khẩu' } });
     } catch (err) {
-      setError(err instanceof ApiError && err.code === Codes.VERIFY_CODE_INCORRECT ? 'Mã xác thực không đúng hoặc đã hết hạn' : errorText(err));
+      setError(err instanceof ApiError && err.code === Codes.VERIFY_CODE_INCORRECT ? 'Mã không đúng hoặc đã hết hạn' : errorText(err));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <AuthShell title="Quên mật khẩu" subtitle="Đặt lại mật khẩu qua mã xác thực gửi về email hoặc SMS.">
+    <AuthShell title="Đặt lại mật khẩu">
       {hint ? <Banner kind="info">{hint}</Banner> : null}
       {error ? <Banner kind="error">{error}</Banner> : null}
       {step === 1 ? (
         <form onSubmit={requestCode} className="form">
-          <Field label="Email / Số điện thoại" name="account" value={account} onChange={setAccount} error={errors.account} />
+          <Field label="Email hoặc số điện thoại" name="account" value={account} onChange={setAccount} error={errors.account} />
           <button className="btn btn-primary btn-block" disabled={busy}>
-            Gửi mã xác thực
+            Gửi mã
           </button>
         </form>
       ) : (
         <form onSubmit={reset} className="form">
-          <Field label="Mã xác thực" name="code" inputMode="numeric" value={code} onChange={(v) => setCode(v.replace(/\D/g, ''))} error={errors.code_verify} maxLength={6} />
+          <Field label="Mã 6 số" name="code" inputMode="numeric" value={code} onChange={(v) => setCode(v.replace(/\D/g, ''))} error={errors.code_verify} maxLength={6} />
           <Field label="Mật khẩu mới" name="password" type="password" value={password} onChange={setPassword} error={errors.new_password} autoComplete="new-password" maxLength={20} />
           <button className="btn btn-primary btn-block" disabled={busy}>
-            Đặt lại mật khẩu
+            Đặt lại
           </button>
           <button type="button" className="btn btn-block" disabled={left > 0 || busy} onClick={() => void requestCode()}>
-            {left > 0 ? `Gửi lại mã (${left}s)` : 'Gửi lại mã'}
+            {left > 0 ? `Gửi lại sau ${left}s` : 'Gửi lại'}
           </button>
         </form>
       )}
       <div className="auth-links">
-        <Link to="/login">Quay lại đăng nhập</Link>
+        <Link to="/login">Đăng nhập</Link>
       </div>
     </AuthShell>
   );

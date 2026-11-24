@@ -133,12 +133,21 @@ export interface SyncDeviceResult {
     room_name?: string | null;
     member_id?: string | null;
     session_id: string | null;
+    /** Cấu hình quay Controller đang chọn (máy Remote hiện và chuẩn bị camera trước khi quay). */
+    config?: RoomConfig | null;
   };
   pending_commands: PendingCommand[];
   session_revoked: Flag;
 }
 
 export type RoomStatus = 'open' | 'recording' | 'closing' | 'closed';
+
+/** Cấu hình quay của phòng: độ phân giải, fps, giới hạn thời gian (giây, 0 = không giới hạn). */
+export interface RoomConfig {
+  resolution: string;
+  fps: number;
+  max_duration: number;
+}
 
 export interface SyncMember {
   member_id: string;
@@ -168,6 +177,8 @@ export interface SyncRoomResult {
     session_id: string | null;
     started_at: string | null;
     invite_code: string;
+    /** Cấu hình đang chọn của phòng (đang quay thì là cấu hình của phiên đó). */
+    config?: RoomConfig | null;
   };
   members: SyncMember[];
   joined: string[];
@@ -184,10 +195,14 @@ export interface StartRecordingResult {
 
 export interface StopRecordingResult {
   session_id: string;
+  started_at?: string;
   stopped_at: string;
   command_id: string;
   results: {
     member_id: string;
+    device_id?: string;
+    camera_name?: string;
+    is_online?: Flag;
     local_video_uid: string | null;
     duration_ms: string;
     size: string | null;
@@ -246,6 +261,9 @@ export interface VideoItem {
   session_id: string | null;
   local_video_uid: string;
   downloaded_by_controller: 0 | 1;
+  /** Mở rộng: độ phân giải thực của file (server đọc bằng ffprobe), vd. "1920x1080". */
+  resolution?: string;
+  fps?: number;
 }
 
 export interface VideoListResult {
@@ -278,9 +296,23 @@ export interface BulkDeleteResult {
   failed: { video_id: string; reason: string }[];
 }
 
-/** Sự kiện Socket.IO (đẩy lệnh < 1 giây). */
+/** Khung hình xem trước của một máy Remote (JPEG dạng data URL, ~1 khung/giây). */
+export interface PreviewFrame {
+  room_id: string;
+  member_id: string;
+  device_id: string;
+  image: string;
+  at: number;
+}
+
+/** Sự kiện Socket.IO (đẩy lệnh < 1 giây, khung hình xem trước). */
 export interface ServerToClientEvents {
   command: (cmd: PendingCommand) => void;
   room_changed: (payload: { room_id: string; revision: number }) => void;
   session_revoked: () => void;
+  preview: (frame: PreviewFrame) => void;
+}
+
+export interface ClientToServerEvents {
+  preview_frame: (image: string) => void;
 }

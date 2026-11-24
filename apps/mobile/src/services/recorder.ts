@@ -73,6 +73,8 @@ class CameraBridge implements RecorderAdapter {
   private flipAfterStop: CameraFacing | 'toggle' | null = null;
   private reporter: Reporter = () => undefined;
   private onNeedCamera: (() => void) | null = null;
+  /** Đã gọi camera.stopRecording(), đang chờ onRecordingFinished. */
+  private stopping = false;
 
   subscribe = this.emitter.subscribe;
   getState = (): CameraBridgeState => this.state;
@@ -102,6 +104,14 @@ class CameraBridge implements RecorderAdapter {
 
   setConfig(config: CaptureConfig) {
     this.set({ config });
+  }
+
+  /** Controller đổi cấu hình trong menu: đổi định dạng camera ngay (khi chưa quay) để thanh thông tin và khung hình khớp. */
+  applyConfig(config: CaptureConfig) {
+    if (this.state.recording) return;
+    const cur = this.state.config;
+    if (cur.resolution === config.resolution && cur.fps === config.fps) return;
+    this.set({ config: { resolution: config.resolution, fps: config.fps } });
   }
 
   /** Nút lật camera trên máy Remote — chạy hoàn toàn cục bộ. */
@@ -137,24 +147,34 @@ class CameraBridge implements RecorderAdapter {
     const camera = this.camera!;
     const rec: ActiveRecording = { opts, localVideoUid: uuid(), startedAt: Date.now() };
     this.active = rec;
+    this.stopping = false;
     camera.startRecording({
       fileType: 'mp4',
       videoCodec: 'h264',
       onRecordingFinished: (video) => void this.onFinished(rec, video),
       onRecordingError: (error) => this.onError(rec, error),
     });
-    this.set({ recording: true, lastError: mic === 'granted' ? null : 'Không có quyền micro: video sẽ không có tiếng' });
+    this.set({ recording: true, lastError: mic === 'granted' ? null : 'Không có quyền micro' });
   }
 
   async stopRecording(): Promise<void> {
-    if (!this.state.recording) return;
+    // Đã yêu cầu dừng rồi: gọi lần hai thì vision-camera báo "no active video recording" dù file vẫn ghi xong.
+    if (!this.state.recording || this.stopping) return;
     if (!this.camera) {
       // Màn Quay đã bị gỡ: không thể dừng gọn, báo lỗi.
       this.finishActive();
       this.reporter('failed', { errorCode: 'CAMERA_UNMOUNTED' });
       return;
     }
-    await this.camera.stopRecording();
+    this.stopping = true;
+    try {
+      await this.camera.stopRecording();
+    } catch (e) {
+      // Bản ghi đã kết thúc (onRecordingFinished sẽ/đã báo kết quả): không coi là lỗi.
+      if (/no-recording-in-progress|no active video recording/i.test(String((e as { code?: string })?.code ?? (e as Error)?.message))) return;
+      this.stopping = false;
+      throw e;
+    }
   }
 
   async switchCamera(facing: CameraFacing | 'toggle'): Promise<void> {
@@ -174,6 +194,7 @@ class CameraBridge implements RecorderAdapter {
 
   private finishActive() {
     this.active = null;
+    this.stopping = false;
     this.set({ recording: false, pendingFlip: false });
     if (this.flipAfterStop) {
       const f = this.flipAfterStop;
@@ -210,6 +231,8 @@ class CameraBridge implements RecorderAdapter {
 
   private onError(rec: ActiveRecording, error: CameraCaptureError) {
     if (this.active !== rec) return;
+    // Lỗi phụ do gọi dừng lặp lại: file vẫn được onRecordingFinished xử lý.
+    if (error.code === 'capture/no-recording-in-progress') return;
     this.finishActive();
     this.set({ lastError: error.message });
     this.reporter('failed', { errorCode: error.code.slice(0, 60) });

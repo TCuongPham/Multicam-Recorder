@@ -1,14 +1,66 @@
-import { COMMAND_TTL_MS, type CommandType, type PendingCommand } from '@multicam/shared';
+import { COMMAND_TTL_MS, type CommandType, type PendingCommand, type RoomConfig } from '@multicam/shared';
 import type { Room } from '@prisma/client';
 import { prisma } from '../db';
 import { newId } from '../lib/ids';
-import { notifyRoomChanged, pushCommand } from './realtime';
+import { forgetMembership, notifyRoomChanged, pushCommand } from './realtime';
 
 /** Tăng revision của phòng (dùng cho tham số since của sync_room). */
 export async function bumpRevision(roomId: string, notify = true): Promise<Room> {
   const room = await prisma.room.update({ where: { id: roomId }, data: { revision: { increment: 1 } } });
   if (notify) notifyRoomChanged(room.ownerId, room.id, room.revision);
   return room;
+}
+
+/**
+ * Tăng revision và gắn revision mới cho dòng thành viên trong CÙNG một transaction.
+ * Nếu tách làm hai lệnh ghi, sync_room có thể đọc revision mới nhưng chưa thấy thành viên được cập nhật
+ * → Controller lưu since = revision mới và bỏ lỡ thay đổi đó mãi mãi.
+ */
+export async function touchMember(
+  roomId: string,
+  memberId: string,
+  data: (revision: number) => Parameters<typeof prisma.roomMember.update>[0]['data'] = (rev) => ({ updatedRev: rev }),
+  notify = true,
+) {
+  const [room, member] = await prisma.$transaction(async (tx) => {
+    const r = await tx.room.update({ where: { id: roomId }, data: { revision: { increment: 1 } } });
+    const m = await tx.roomMember.update({ where: { id: memberId }, data: data(r.revision) });
+    return [r, m] as const;
+  });
+  if (notify) notifyRoomChanged(room.ownerId, room.id, room.revision);
+  return { room, member };
+}
+
+/** Đọc cấu hình quay (JSON) của phòng hoặc phiên quay. */
+export function parseConfig(json: string | null | undefined): RoomConfig | null {
+  if (!json) return null;
+  try {
+    const c = JSON.parse(json) as Partial<RoomConfig>;
+    return { resolution: String(c.resolution ?? '1920x1080'), fps: Number(c.fps ?? 30), max_duration: Number(c.max_duration ?? 0) };
+  } catch {
+    return null;
+  }
+}
+
+/** Cho máy Remote quá giới hạn mới bị coi là quá hạn (Controller thường tự dừng đúng lúc). */
+const EXPIRE_GRACE_MS = 5000;
+
+/**
+ * Phiên có giới hạn thời gian đã quá hạn mà Controller chưa bấm dừng (ví dụ đóng màn hình):
+ * server tự kết thúc phiên để trạng thái phòng không kẹt ở "đang quay".
+ */
+export async function expireSessionIfDue(room: Room): Promise<Room> {
+  if (room.status !== 'recording' || !room.currentSessionId) return room;
+  const session = await prisma.recordingSession.findUnique({ where: { id: room.currentSessionId } });
+  const max = parseConfig(session?.config)?.max_duration ?? 0;
+  if (!session || max <= 0 || Date.now() < session.startedAt.getTime() + max * 1000 + EXPIRE_GRACE_MS) return room;
+  await prisma.recordingSession.update({ where: { id: session.id }, data: { stoppedAt: new Date(session.startedAt.getTime() + max * 1000) } });
+  const updated = await prisma.room.updateMany({ where: { id: room.id, currentSessionId: session.id }, data: { status: 'open', currentSessionId: null } });
+  if (updated.count) {
+    const members = await activeMembers(room.id);
+    await queueCommand({ roomId: room.id, deviceIds: members.map((m) => m.deviceId), type: 'stop_record', payload: { session_id: session.id, reason: 'max_duration' } });
+  }
+  return bumpRevision(room.id);
 }
 
 /** Xếp một lệnh vào hàng đợi của từng máy và đẩy ngay qua socket nếu đang mở. */
@@ -59,11 +111,14 @@ export function activeMembers(roomId: string) {
 export async function markMemberLeft(memberId: string, reason: 'left' | 'kicked' | 'closed') {
   const member = await prisma.roomMember.findUnique({ where: { id: memberId } });
   if (!member || member.leftAt) return null;
-  const room = await bumpRevision(member.roomId);
-  return prisma.roomMember.update({
-    where: { id: memberId },
-    data: { leftAt: new Date(), leftReason: reason, leftRev: room.revision, updatedRev: room.revision },
-  });
+  forgetMembership(member.deviceId);
+  const { member: left } = await touchMember(member.roomId, memberId, (rev) => ({
+    leftAt: new Date(),
+    leftReason: reason,
+    leftRev: rev,
+    updatedRev: rev,
+  }));
+  return left;
 }
 
 /** Rời mọi phòng đang tham gia (đăng xuất / xóa tài khoản). */

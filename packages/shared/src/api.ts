@@ -13,6 +13,7 @@ import type {
   StartRecordingInput,
   StopRecordingInput,
   SwitchCameraInput,
+  RecordingConfigInput,
   SyncDeviceInput,
 } from './schemas';
 import type {
@@ -36,6 +37,7 @@ import type {
   StartRecordingResult,
   StopRecordingResult,
   SwitchCameraResult,
+  RoomConfig,
   SyncDeviceResult,
   SyncRoomResult,
   UploadChunkResult,
@@ -260,6 +262,8 @@ export class ApiClient {
     this.data<StartRecordingResult>('POST', `/rooms/${roomId}/recording/start`, { body, accept: [Codes.ACTION_DONE_PREVIOUSLY] });
   stopRecording = (roomId: string, body: StopRecordingInput) =>
     this.data<StopRecordingResult>('POST', `/rooms/${roomId}/recording/stop`, { body, accept: [Codes.ACTION_DONE_PREVIOUSLY] });
+  /** Mở rộng: Controller đổi cấu hình quay trong menu → máy Remote cập nhật ngay (khi chưa quay). */
+  setRoomConfig = (roomId: string, body: RecordingConfigInput) => this.data<{ config: RoomConfig }>('POST', `/rooms/${roomId}/config`, { body });
   switchCamera = (roomId: string, body: SwitchCameraInput) =>
     this.data<SwitchCameraResult>('POST', `/rooms/${roomId}/camera`, { body, accept: [Codes.ACTION_DONE_PREVIOUSLY] });
 

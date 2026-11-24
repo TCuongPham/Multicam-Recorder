@@ -1,25 +1,54 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useStore } from '@multicam/shared/react';
 import { session } from '../../services/session';
 import { signOut } from '../../services/runtime';
-import { getDeviceUuid, getServerUrl, setCameraName } from '../../services/storage';
+import { getServerUrl, setCameraName } from '../../services/storage';
 import { remoteAgent } from '../../services/remote';
 import { resolveCameraName } from '../../services/recorder';
-import { Button, Card, Field, Muted, Screen } from '../../ui/components';
-import { colors } from '../../ui/theme';
+import { Button, Card, Field, Icon, Muted, PressableScale, Row, Screen, type IconName } from '../../ui/components';
+import { colors, font, radius, spacing } from '../../ui/theme';
 import type { AppStackParams } from '../../navigation/types';
 
 function InfoRow({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
       <Muted>{label}</Muted>
-      <Text style={{ color: colors.text, flexShrink: 1, textAlign: 'right' }} selectable>
+      <Text style={{ color: colors.text, flexShrink: 1, textAlign: 'right', fontSize: 13 }} selectable>
         {value || '—'}
       </Text>
     </View>
+  );
+}
+
+/** Một dòng thao tác kiểu danh sách cài đặt: biểu tượng · nhãn (· mô tả) · mũi tên. */
+function ActionRow({
+  icon,
+  label,
+  description,
+  danger,
+  loading,
+  onPress,
+}: {
+  icon: IconName;
+  label: string;
+  description?: string;
+  danger?: boolean;
+  loading?: boolean;
+  onPress: () => void;
+}) {
+  const fg = danger ? colors.danger : colors.text;
+  return (
+    <PressableScale accessibilityRole="button" accessibilityLabel={label} onPress={onPress} disabled={loading} style={styles.action}>
+      <Icon name={icon} size={20} color={fg} />
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={[styles.actionText, { color: fg }]}>{label}</Text>
+        {description ? <Muted>{description}</Muted> : null}
+      </View>
+      {loading ? <ActivityIndicator size="small" color={colors.muted} /> : <Icon name="chevron-right" size={18} color={colors.muted} />}
+    </PressableScale>
   );
 }
 
@@ -37,8 +66,7 @@ export function SettingsScreen() {
   }, [isRemote]);
 
   function confirmLogout() {
-    const msg = isRemote && agent.inRoom ? 'Máy đang ở trong phòng. Ứng dụng sẽ rời phòng trước khi đăng xuất.' : 'Bạn có chắc muốn đăng xuất?';
-    Alert.alert('Đăng xuất', msg, [
+    Alert.alert('Đăng xuất?', isRemote && agent.inRoom ? 'Máy sẽ rời phòng.' : undefined, [
       { text: 'Hủy', style: 'cancel' },
       {
         text: 'Đăng xuất',
@@ -55,32 +83,38 @@ export function SettingsScreen() {
   return (
     <Screen>
       <Card>
-        <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>
-          {user ? `${user.last_name} ${user.first_name}`.trim() : 'Tài khoản'}
-        </Text>
-        <InfoRow label="Vai trò" value={info?.role === 'controller' ? 'Controller (điều khiển)' : 'Remote (máy quay)'} />
+        <Row style={{ gap: 12, marginBottom: 4 }}>
+          <View style={styles.avatar}>
+            <Icon name="user" size={20} color={colors.accent} />
+          </View>
+          <Text style={{ flex: 1, fontSize: 17, fontWeight: font.heading, color: colors.text }}>
+            {user ? `${user.last_name} ${user.first_name}`.trim() : 'Tài khoản'}
+          </Text>
+        </Row>
+        <InfoRow label="Vai trò" value={info?.role === 'controller' ? 'Điều khiển' : 'Máy quay'} />
         <InfoRow label="Email" value={user?.email} />
         <InfoRow label="Số điện thoại" value={user?.phone} />
-        <InfoRow label="Server" value={getServerUrl()} />
-        <InfoRow label="Mã thiết bị (server)" value={info?.deviceId} />
-        <InfoRow label="UUID cài đặt" value={getDeviceUuid()} />
+        <InfoRow label="Máy chủ" value={getServerUrl()} />
+        <InfoRow label="Mã thiết bị" value={info?.deviceId} />
       </Card>
 
       {isRemote ? (
         <Card>
           <Field
-            label="Tên máy quay"
+            label="Tên camera"
             value={cameraName}
             onChangeText={(v) => {
               setName(v);
               setSaved(false);
             }}
             maxLength={40}
-            hint={saved ? 'Đã lưu. Tên mới dùng cho lần vào phòng / clip tiếp theo.' : 'Hiện trên màn Điều khiển và trong tên file clip'}
+            hint={saved ? 'Đã lưu' : null}
           />
           <Button
-            title="Lưu tên máy"
-            variant="secondary"
+            title="Lưu"
+            variant="tonal"
+            small
+            style={{ alignSelf: 'flex-start' }}
             disabled={!cameraName.trim()}
             onPress={async () => {
               await setCameraName(cameraName);
@@ -91,12 +125,40 @@ export function SettingsScreen() {
         </Card>
       ) : null}
 
-      <Card>
-        <Button title="Đổi mật khẩu" variant="secondary" onPress={() => navigation.navigate('ChangePassword')} />
-        <Button title="Đăng xuất" variant="secondary" onPress={confirmLogout} loading={loggingOut} />
+      <Card style={{ padding: spacing.xs, gap: 0 }}>
+        <ActionRow icon="key" label="Đổi mật khẩu" onPress={() => navigation.navigate('ChangePassword')} />
+        <ActionRow icon="logout" label="Đăng xuất" onPress={confirmLogout} loading={loggingOut} />
         {/* Ẩn mục xóa tài khoản khi account_role = controller. */}
-        {isRemote ? <Button title="Xóa tài khoản" variant="danger" onPress={() => navigation.navigate('DeleteAccount')} /> : null}
+        {isRemote ? (
+          <ActionRow
+            icon="trash"
+            label="Xóa tài khoản"
+            description="Xóa vĩnh viễn tài khoản và video."
+            danger
+            onPress={() => navigation.navigate('DeleteAccount')}
+          />
+        ) : null}
       </Card>
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  avatar: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  action: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: radius.lg,
+  },
+  actionText: { fontSize: 15, fontWeight: font.medium },
+});

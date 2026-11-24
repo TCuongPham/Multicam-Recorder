@@ -1,6 +1,7 @@
 import React, { type ReactNode } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors, radius, spacing } from './theme';
+import { Image, StyleSheet, Text, View } from 'react-native';
+import { CheckMark, Icon, PressableScale } from './components';
+import { colors, font, radius, spacing } from './theme';
 
 export function VideoRow({
   thumbnail,
@@ -26,18 +27,14 @@ export function VideoRow({
   children?: ReactNode;
 }) {
   return (
-    <Pressable
-      onPress={onPress}
-      onLongPress={onLongPress}
-      style={({ pressed }) => [styles.row, selected && styles.selected, pressed && { opacity: 0.85 }]}
-    >
-      {selecting ? (
-        <View style={[styles.check, selected && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
-          {selected ? <Text style={{ color: '#fff', fontWeight: '800' }}>✓</Text> : null}
-        </View>
-      ) : null}
+    <PressableScale onPress={onPress} onLongPress={onLongPress} style={[styles.row, selected && styles.selected]}>
+      {selecting ? <CheckMark checked={!!selected} round /> : null}
       <View style={styles.thumbBox}>
-        {thumbnail ? <Image source={{ uri: thumbnail }} style={styles.thumb} resizeMode="cover" /> : <Text style={{ fontSize: 22 }}>🎞️</Text>}
+        {thumbnail ? (
+          <Image source={{ uri: thumbnail }} style={styles.thumb} resizeMode="cover" />
+        ) : (
+          <Icon name="video" size={20} color={colors.muted} />
+        )}
       </View>
       <View style={{ flex: 1, gap: 2 }}>
         <Text style={styles.title} numberOfLines={1}>
@@ -48,7 +45,7 @@ export function VideoRow({
         {children}
       </View>
       {right}
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -57,32 +54,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    backgroundColor: colors.card,
-    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
     padding: spacing.sm,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
   },
-  selected: { borderColor: colors.primary, borderWidth: 2 },
-  check: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 2,
-    borderColor: colors.muted,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  selected: { backgroundColor: colors.accentSoft },
   thumbBox: {
     width: 96,
     height: 54,
-    borderRadius: radius.sm,
-    backgroundColor: colors.dark,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface2,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
   },
   thumb: { width: '100%', height: '100%' },
-  title: { fontSize: 15, fontWeight: '700', color: colors.text },
-  sub: { fontSize: 12, color: colors.muted },
+  title: { fontSize: 15, fontWeight: font.heading, color: colors.text },
+  sub: { fontSize: 12, color: colors.muted, fontVariant: font.tabular },
 });

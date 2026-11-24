@@ -31,7 +31,7 @@ export function VerifyScreen({ route }: AuthScreenProps<'Verify'>) {
       if (isApiError(e, Codes.LIMITED_ACCESS)) {
         const retry = Number((e.data as { retry_after?: number } | null)?.retry_after) || VERIFY_RESEND_SECONDS;
         start(retry);
-        setSendError('Mã đã được gửi trước đó. Vui lòng chờ hết thời gian đếm ngược để gửi lại.');
+        setSendError('Đã gửi mã trước đó');
       } else {
         setSendError(errorMessage(e));
       }
@@ -52,7 +52,7 @@ export function VerifyScreen({ route }: AuthScreenProps<'Verify'>) {
   async function onConfirm() {
     const parsed = verifyCodeSchema.safeParse(code.trim());
     if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? 'Mã xác thực gồm 6 số');
+      setError(parsed.error.issues[0]?.message ?? 'Mã gồm 6 số');
       return;
     }
     setError(null);
@@ -68,7 +68,7 @@ export function VerifyScreen({ route }: AuthScreenProps<'Verify'>) {
       });
     } catch (e) {
       if (isApiError(e, Codes.VERIFY_CODE_INCORRECT)) {
-        setError('Mã xác thực không đúng');
+        setError('Sai mã');
         setCode('');
       } else {
         setError(errorMessage(e));
@@ -80,20 +80,18 @@ export function VerifyScreen({ route }: AuthScreenProps<'Verify'>) {
 
   return (
     <Screen>
+      <Muted style={{ fontSize: 14 }}>Đã gửi mã tới {hint?.masked ?? email ?? phone}</Muted>
+      {hint ? (
+        <Banner kind="info">
+          <Text style={{ color: colors.text }}>
+            Mã thử nghiệm: <Text style={{ fontWeight: '600', letterSpacing: 2, color: colors.accent }}>{hint.code}</Text>
+          </Text>
+        </Banner>
+      ) : null}
+      {sendError ? <Banner kind="warning">{sendError}</Banner> : null}
       <Card>
-        <Muted>
-          Mã xác thực 6 số đã được gửi tới {hint?.masked ?? email ?? phone}. Nhập mã để kích hoạt tài khoản.
-        </Muted>
-        {hint ? (
-          <Banner kind="info">
-            <Text style={{ color: colors.primary }}>
-              Mô phỏng email/SMS — mã của bạn: <Text style={{ fontWeight: '800', letterSpacing: 2 }}>{hint.code}</Text>
-            </Text>
-          </Banner>
-        ) : null}
-        {sendError ? <Banner kind="warning">{sendError}</Banner> : null}
         <Field
-          label="Mã xác thực"
+          label="Mã 6 số"
           value={code}
           onChangeText={(v) => setCode(v.replace(/\D/g, ''))}
           keyboardType="number-pad"
@@ -101,10 +99,10 @@ export function VerifyScreen({ route }: AuthScreenProps<'Verify'>) {
           placeholder="______"
           error={error}
         />
-        <Button title="Xác nhận" onPress={onConfirm} loading={loading} />
+        <Button title="Xác nhận" onPress={onConfirm} loading={loading} style={{ marginTop: 4 }} />
         <Button
-          title={remaining > 0 ? `Gửi lại mã (${remaining}s)` : 'Gửi lại mã'}
-          variant="secondary"
+          title={remaining > 0 ? `Gửi lại sau ${remaining}s` : 'Gửi lại'}
+          variant="ghost"
           onPress={() => void send()}
           disabled={remaining > 0}
           loading={sending}

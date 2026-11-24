@@ -1,6 +1,11 @@
 // Giả lập N máy Remote vào phòng để demo/kiểm thử Controller mà không cần điện thoại.
 // Dùng: npm run sim -w @multicam/server -- <MÃ_MỜI> [số_máy=2] [api=http://localhost:3000]
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+
+/** Chạy ffmpeg bất đồng bộ để các máy giả lập không chặn nhau. */
+function ffmpeg(args: string[]): Promise<void> {
+  return new Promise((resolve) => spawn(ffmpegPath as unknown as string, args, { windowsHide: true }).on('close', () => resolve()));
+}
 import crypto from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -77,6 +82,7 @@ async function simulate(index: number) {
     api,
     kv: new MemoryKeyValueStore(),
     getUploadStatus: uploads.syncStatus,
+    onStatusReset: () => uploads.resetResult(),
     getDeviceStatus: async () => ({ battery_level: 90 - index * 7, is_charging: 0, storage_free: 32e9, camera_facing: facing }),
     recorder: {
       startRecording: async (opts) => {
@@ -91,7 +97,7 @@ async function simulate(index: number) {
         const uid = uuid();
         const baseName = buildClipBaseName({ recordedAt: opts.serverStartedAt, cameraName: name, sessionId: opts.sessionId, localVideoUid: uid });
         const file = path.join(dir, `${baseName}.mp4`);
-        spawnSync(ffmpegPath as unknown as string, [
+        await ffmpeg([
           '-y', '-f', 'lavfi', '-i', `testsrc2=size=1280x720:rate=30:duration=${seconds}`,
           '-f', 'lavfi', '-i', `sine=frequency=${300 + index * 120}:duration=${seconds}`,
           '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '4M', '-c:a', 'aac', '-movflags', 'frag_keyframe+empty_moov', file,
@@ -130,10 +136,28 @@ async function simulate(index: number) {
         facing = f === 'toggle' ? (facing === 'front' ? 'back' : 'front') : f;
         console.log(`[${name}] ⇄ camera ${facing === 'front' ? 'trước' : 'sau'}`);
       },
+      applyConfig: (c) => console.log(`[${name}] ⚙ cấu hình ${c.resolution} · ${c.fps}fps`),
     },
   });
 
-  connectRealtime({ baseUrl: BASE, getToken: () => api.getAccessToken(), onCommand: (cmd) => agent.handlePushedCommand(cmd) });
+  const conn = connectRealtime({ baseUrl: BASE, getToken: () => api.getAccessToken(), onCommand: (cmd) => agent.handlePushedCommand(cmd) });
+
+  // Khung hình xem trước giả: 12 ảnh testsrc2 (mỗi máy một màu), gửi vòng lặp 1 ảnh/giây.
+  const framesDir = path.join(dir, 'preview');
+  await fs.mkdir(framesDir, { recursive: true });
+  await ffmpeg([
+    '-y', '-f', 'lavfi', '-i', `testsrc2=size=320x180:rate=1:duration=12`,
+    '-vf', `hue=h=${index * 70}`, '-q:v', '6', path.join(framesDir, 'f%02d.jpg'),
+  ]);
+  const frames = (await fs.readdir(framesDir).catch(() => [] as string[]))
+    .filter((f) => f.endsWith('.jpg'))
+    .sort();
+  const frameData = await Promise.all(frames.map(async (f) => 'data:image/jpeg;base64,' + (await fs.readFile(path.join(framesDir, f))).toString('base64')));
+  let frameIndex = 0;
+  setInterval(() => {
+    if (!agent.getState().inRoom || !frameData.length) return;
+    conn.sendPreview(frameData[frameIndex++ % frameData.length]);
+  }, 1000);
   const joined = await api.joinRoom({ invite_code: inviteCode, device_id: deviceId, camera_name: name, grant_control: true });
   agent.markJoinedRoom(joined.room_id, joined.room_name, joined.member_id);
   await agent.start(deviceId);

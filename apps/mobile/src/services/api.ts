@@ -23,11 +23,11 @@ export const api = new ApiClient({
 export function errorMessage(e: unknown): string {
   if (e instanceof ApiError) {
     if (e.code === Codes.PARAM_VALUE_INVALID && e.field === 'password') return 'Sai mật khẩu';
-    if (e.code === Codes.PARAM_VALUE_INVALID && e.field === 'old_password') return 'Mật khẩu cũ không đúng';
+    if (e.code === Codes.PARAM_VALUE_INVALID && e.field === 'old_password') return 'Sai mật khẩu';
     return e.userMessage;
   }
   const msg = (e as Error)?.message;
-  return msg ? String(msg) : 'Đã có lỗi xảy ra, vui lòng thử lại';
+  return msg ? String(msg) : 'Đã xảy ra lỗi';
 }
 
 export function isApiError(e: unknown, code?: string): e is ApiError {

@@ -17,5 +17,5 @@ export type DeviceTypeValue = (typeof DeviceType)[keyof typeof DeviceType];
 export type AccountRole = 'controller' | 'remote';
 export type RecordingState = 'idle' | 'recording' | 'saved' | 'failed';
 export type UploadState = 'none' | 'uploading' | 'uploaded' | 'failed';
-export type CommandType = 'start_record' | 'stop_record' | 'leave_room' | 'switch_camera';
+export type CommandType = 'start_record' | 'stop_record' | 'leave_room' | 'switch_camera' | 'set_config';
 export type CameraFacing = 'front' | 'back';
